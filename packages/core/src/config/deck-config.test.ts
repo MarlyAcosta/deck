@@ -80,6 +80,13 @@ describe("PACKAGE_INSTRUCTION_PACKAGE_IDS", () => {
       configurable: false,
       defaultEnabled: true,
     });
+    expect(PACKAGE_INSTRUCTION_CONFIGURATION_METADATA.filter((entry) => entry.configurable).map((entry) => [entry.id, entry.defaultEnabled])).toEqual([
+      ["codebase-memory", true],
+      ["context-mode", true],
+      ["rtk", true],
+      ["adaptive-memory", false],
+      ["serena", false],
+    ]);
   });
 
   test("normalizes selections to supported package metadata and forces code-economy on", () => {
@@ -114,9 +121,9 @@ describe("readDeckConfig", () => {
       adaptiveMemory: { enabled: false, activeProvider: "none" },
       webSearch: { enabled: false },
       packageInstructions: {
-        pi: { "codebase-memory": false, "code-economy": true, "context-mode": false, rtk: false, "adaptive-memory": false, serena: false },
-        opencode: { "codebase-memory": false, "code-economy": true, "context-mode": false, rtk: false, "adaptive-memory": false, serena: false },
-        codex: { "codebase-memory": false, "code-economy": true, "context-mode": false, rtk: false, "adaptive-memory": false, serena: false },
+        pi: { "codebase-memory": true, "code-economy": true, "context-mode": true, rtk: true, "adaptive-memory": false, serena: false },
+        opencode: { "codebase-memory": true, "code-economy": true, "context-mode": true, rtk: true, "adaptive-memory": false, serena: false },
+        codex: { "codebase-memory": true, "code-economy": true, "context-mode": true, rtk: true, "adaptive-memory": false, serena: false },
       },
       orchestratorPersonality: "pragmatica",
       developerTeamExecution: {
@@ -205,22 +212,24 @@ describe("validateDeckConfig - developerTeamExecution", () => {
 // ---------------------------------------------------------------------------
 
 describe("validateDeckConfig — packageInstructions", () => {
-  test("defaults Codex to code-economy only in canonical six-ID order", () => {
+  test("defaults local Codex packages on and gated packages off in canonical six-ID order", () => {
     const config = validateDeckConfig({});
     expect(Object.keys(config.packageInstructions.codex)).toEqual(["codebase-memory", "code-economy", "context-mode", "rtk", "adaptive-memory", "serena"]);
-    expect(config.packageInstructions.codex).toEqual({ "codebase-memory": false, "code-economy": true, "context-mode": false, rtk: false, "adaptive-memory": false, serena: false });
+    expect(config.packageInstructions.codex).toEqual({ "codebase-memory": true, "code-economy": true, "context-mode": true, rtk: true, "adaptive-memory": false, serena: false });
   });
-  test("defaults code-economy to true (always-active baseline) and others to false when field is absent", () => {
+  test("defaults local configurable packages on and gated packages off when the field is absent", () => {
     const config = validateDeckConfig({ version: 1, adaptiveMemory: { activeProvider: "none" } });
 
-    expect(config.packageInstructions.pi["codebase-memory"]).toBe(false);
+    expect(config.packageInstructions.pi["codebase-memory"]).toBe(true);
     expect(config.packageInstructions.pi["code-economy"]).toBe(true); // Always active baseline
-    expect(config.packageInstructions.pi["context-mode"]).toBe(false);
-    expect(config.packageInstructions.pi.rtk).toBe(false);
-    expect(config.packageInstructions.opencode["codebase-memory"]).toBe(false);
+    expect(config.packageInstructions.pi["context-mode"]).toBe(true);
+    expect(config.packageInstructions.pi.rtk).toBe(true);
+    expect(config.packageInstructions.pi.serena).toBe(false);
+    expect(config.packageInstructions.opencode["codebase-memory"]).toBe(true);
     expect(config.packageInstructions.opencode["code-economy"]).toBe(true); // Always active baseline
-    expect(config.packageInstructions.opencode["context-mode"]).toBe(false);
-    expect(config.packageInstructions.opencode.rtk).toBe(false);
+    expect(config.packageInstructions.opencode["context-mode"]).toBe(true);
+    expect(config.packageInstructions.opencode.rtk).toBe(true);
+    expect(config.packageInstructions.opencode.serena).toBe(false);
   });
 
   test("accepts valid per-runner boolean toggles", () => {
@@ -235,32 +244,35 @@ describe("validateDeckConfig — packageInstructions", () => {
 
     expect(config.packageInstructions.pi["codebase-memory"]).toBe(true);
     expect(config.packageInstructions.pi["context-mode"]).toBe(false);
-    expect(config.packageInstructions.pi.rtk).toBe(false);
+    expect(config.packageInstructions.pi.rtk).toBe(true);
     expect(config.packageInstructions.opencode.rtk).toBe(true);
-    expect(config.packageInstructions.opencode["codebase-memory"]).toBe(false);
+    expect(config.packageInstructions.opencode["codebase-memory"]).toBe(true);
   });
 
-  test("treats missing runner inside packageInstructions as empty object defaults to false", () => {
+  test("treats a missing runner inside packageInstructions as the safe package defaults", () => {
     const config = validateDeckConfig({
       version: 1,
       adaptiveMemory: { activeProvider: "none" },
       packageInstructions: {},
     });
 
-    // All packages for all runners default to false
-    expect(config.packageInstructions.pi["codebase-memory"]).toBe(false);
-    expect(config.packageInstructions.opencode.rtk).toBe(false);
+    expect(config.packageInstructions.pi["codebase-memory"]).toBe(true);
+    expect(config.packageInstructions.opencode.rtk).toBe(true);
+    expect(config.packageInstructions.pi.serena).toBe(false);
+    expect(config.packageInstructions.opencode.serena).toBe(false);
   });
 
-  test("treats null config input as default config (all package instructions disabled)", () => {
+  test("treats null config input as the safe package defaults", () => {
     const config = validateDeckConfig(null);
 
-    expect(config.packageInstructions.pi["codebase-memory"]).toBe(false);
-    expect(config.packageInstructions.pi["context-mode"]).toBe(false);
-    expect(config.packageInstructions.pi.rtk).toBe(false);
-    expect(config.packageInstructions.opencode["codebase-memory"]).toBe(false);
-    expect(config.packageInstructions.opencode["context-mode"]).toBe(false);
-    expect(config.packageInstructions.opencode.rtk).toBe(false);
+    expect(config.packageInstructions.pi["codebase-memory"]).toBe(true);
+    expect(config.packageInstructions.pi["context-mode"]).toBe(true);
+    expect(config.packageInstructions.pi.rtk).toBe(true);
+    expect(config.packageInstructions.pi.serena).toBe(false);
+    expect(config.packageInstructions.opencode["codebase-memory"]).toBe(true);
+    expect(config.packageInstructions.opencode["context-mode"]).toBe(true);
+    expect(config.packageInstructions.opencode.rtk).toBe(true);
+    expect(config.packageInstructions.opencode.serena).toBe(false);
   });
 
   test("rejects unknown runner key inside packageInstructions when registry is provided", () => {
@@ -294,6 +306,26 @@ describe("validateDeckConfig — packageInstructions", () => {
     );
     // Should get defaults (pi + opencode)
     expect(config.packageInstructions.pi).toBeDefined();expect(config.packageInstructions.opencode).toBeDefined();
+  });
+
+  test("defaults registered runners only to their supported local packages", () => {
+    const registry = createAdapterRegistry();
+    registry.register("atlas", {
+      runnerId: "atlas",
+      environmentIds: ["atlas-development"],
+      packageInstructionIds: ["code-economy", "context-mode"],
+    } as any);
+
+    const config = validateDeckConfig({}, { registry });
+
+    expect(config.packageInstructions.atlas).toEqual({
+      "codebase-memory": false,
+      "code-economy": true,
+      "context-mode": true,
+      rtk: false,
+      "adaptive-memory": false,
+      serena: false,
+    });
   });
 
   test("rejects unknown package ID inside runner sub-object", () => {

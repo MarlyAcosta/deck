@@ -744,7 +744,7 @@ function getConfiguredPackageInstructionIds(
   toggles: Readonly<Record<string, boolean>>,
 ) {
   return supportedMetadata
-    .filter((entry) => entry.defaultEnabled || (entry.configurable && toggles[entry.id] === true))
+    .filter((entry) => entry.configurable ? toggles[entry.id] === true : entry.defaultEnabled)
     .map((entry) => entry.id);
 }
 
@@ -781,9 +781,12 @@ function packageInstructionConfigForPersistence(
   supportedMetadata: readonly PackageInstructionConfigurationMetadata[],
   toggles: Readonly<Record<string, boolean>>,
 ): Record<string, boolean> {
-  return Object.fromEntries(supportedMetadata.map((entry) => [
+  const supported = new Set(supportedMetadata.map((entry) => entry.id));
+  return Object.fromEntries(PACKAGE_INSTRUCTION_CONFIGURATION_METADATA.map((entry) => [
     entry.id,
-    entry.defaultEnabled || (entry.configurable && toggles[entry.id] === true),
+    entry.configurable
+      ? supported.has(entry.id) && toggles[entry.id] === true
+      : entry.defaultEnabled,
   ]));
 }
 
@@ -3669,7 +3672,7 @@ export function DeckApp(dependencies: DeckAppDependencies = {}) {
           cursor={configurePackagesCursor}
           adapter={configurePackagesAdapter}
           packages={configurePackageRows}
-          baseline={configurePackageMetadata.find((entry) => entry.defaultEnabled)}
+          baseline={configurePackageMetadata.find((entry) => !entry.configurable && entry.defaultEnabled)}
           toggles={configurePackagesToggles}
         />
       ) : null}

@@ -358,8 +358,8 @@ describe("Pi Runner dashboard action runner Supermemory safety", () => {
     expect(writes[0]!.packageInstructions.codex).toEqual({
       "codebase-memory": true,
       "code-economy": true,
-      "context-mode": false,
-      rtk: false,
+      "context-mode": true,
+      rtk: true,
       "adaptive-memory": true,
       serena: false,
     });

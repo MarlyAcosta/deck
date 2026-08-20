@@ -114,7 +114,7 @@ export function reduceRunnerDashboard(
     case "set-team-selected":
       return setTeamSelected(state, action.teamId, action.selected);
     case "toggle-package-instruction":
-      return setPackageInstruction(state, action.packageId, !state.packageInstructions[action.packageId]);
+      return togglePackageInstruction(state, action.packageId);
     case "set-package-instruction":
       return setPackageInstruction(state, action.packageId, action.enabled);
     case "set-runner":
@@ -178,6 +178,16 @@ function setCapability(
   selected: boolean,
   fromUserToggle: boolean,
 ): RunnerDashboardState {
+  const next = updateCapabilitySelection(state, capabilityId, selected, fromUserToggle);
+  return next === state ? state : invalidatePlan(next);
+}
+
+function updateCapabilitySelection(
+  state: RunnerDashboardState,
+  capabilityId: CapabilityId,
+  selected: boolean,
+  fromUserToggle: boolean,
+): RunnerDashboardState {
   const currentSelected = Boolean(state.selectedCapabilities[capabilityId]);
   const currentExplicit = Boolean(state.explicitlySelectedCapabilities[capabilityId]);
   const explicitlySelectedCapabilities = { ...state.explicitlySelectedCapabilities };
@@ -200,7 +210,7 @@ function setCapability(
     || currentOperation !== state.currentOperation;
   if (currentSelected === selected && !explicitChanged) return state;
 
-  return invalidatePlan({
+  return {
     ...state,
     selectedCapabilities: {
       ...state.selectedCapabilities,
@@ -208,7 +218,7 @@ function setCapability(
     },
     explicitlySelectedCapabilities,
     currentOperation,
-  });
+  };
 }
 
 function getCurrentOperation(state: RunnerDashboardState): RunnerOperationIdentity | undefined {
@@ -373,6 +383,27 @@ function setTeamSelected(state: RunnerDashboardState, teamId: string, selected: 
       },
     },
   });
+}
+
+function togglePackageInstruction(state: RunnerDashboardState, packageId: CanonicalInstructionPackageId): RunnerDashboardState {
+  if (!CANONICAL_INSTRUCTION_PACKAGE_IDS.includes(packageId)) return state;
+  const enabled = !state.packageInstructions[packageId];
+  const withInstruction = {
+    ...state,
+    packageInstructions: {
+      ...state.packageInstructions,
+      [packageId]: enabled,
+    },
+  };
+
+  // This toggle is emitted only by the interactive Packages screen. Serena's
+  // bootstrap gate therefore records the same current-operation user action
+  // as the dedicated capability toggle, while programmatic set actions remain
+  // instruction-only and cannot authorize installation.
+  const next = packageId === "serena"
+    ? updateCapabilitySelection(withInstruction, "serena", enabled, true)
+    : withInstruction;
+  return invalidatePlan(next);
 }
 
 function setPackageInstruction(state: RunnerDashboardState, packageId: CanonicalInstructionPackageId, enabled: boolean): RunnerDashboardState {

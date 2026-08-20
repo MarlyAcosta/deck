@@ -412,7 +412,7 @@ describe("serena bootstrap Core service", () => {
       method: "GET",
       redirect: "manual",
       maxBytes: expect.any(Number),
-      timeoutMs: expect.any(Number),
+      timeoutMs: 120_000,
     });
     expect(state.calls.fetches[0]).not.toHaveProperty("headers.Authorization");
 
@@ -422,6 +422,7 @@ describe("serena bootstrap Core service", () => {
       args: [],
       shell: false,
       stdin: new Uint8Array([35, 32, 117, 118]),
+      timeoutMs: 120_000,
       env: {
         PATH: "/usr/bin:/bin",
         LC_ALL: "C",
