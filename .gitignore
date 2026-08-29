@@ -25,3 +25,9 @@ apps/cli/install
 # Auto-generated TypeScript files (build-time injection — do not edit manually)
 *.generated.ts
 !packages/core/src/skills/external/content.generated.ts
+
+# Windows NTFS "downloaded from the internet" metadata (Alternate Data Stream artifacts that
+# leak into the working tree when files are touched from Windows-side tools over \\wsl.localhost\
+# or similar). Always junk, never real content — see the cleanup in
+# openspec/changes/add-claude-code-runner-support/ session history.
+*:Zone.Identifier
