@@ -1,5 +1,5 @@
 import type { RunnerProjectInspection } from "@deck/core";
-import { inspectClaudeCompatibility, findClaudeFixture } from "./compatibility";
+import { inspectClaudeCompatibility } from "./compatibility";
 
 export type ClaudeProbeResult = { found: false } | { found: true; version: string; help: string };
 
@@ -10,7 +10,16 @@ export type ClaudePreflightEffects = {
 /**
  * Task 1.2: real detection beyond apps/cli/src/runtime-detection.ts's PATH-only check.
  * Distinguishes "binary present" from "binary present and launch-compatible" per
- * REQ-CLD-COMPAT-002 by matching the probed version against a captured compatibility fixture.
+ * REQ-CLD-COMPAT-002.
+ *
+ * Compatibility is derived from the LIVE probed `--help` text, never from a static captured
+ * fixture looked up by version number — matching Codex's `inspectCodexProject` precedent
+ * exactly (`packages/adapter-codex/src/preflight.ts`), which parses `probe.help` directly. An
+ * earlier draft looked up a fixture by version instead; that was wrong (caught by a failing
+ * test, not by inspection) because it would report whatever a captured fixture said rather than
+ * what the actually-installed binary actually does. Captured fixtures in
+ * `__fixtures__/claude/releases.ts` exist only for compatibility.test.ts's offline determinism,
+ * never for this runtime path.
  */
 export async function inspectClaudeProject(
   projectRoot: string,
@@ -26,28 +35,18 @@ export async function inspectClaudeProject(
     };
   }
 
-  const fixture = findClaudeFixture(probe.version);
-  if (!fixture) {
-    return {
-      projectRoot,
-      state: "degraded",
-      evidence: { binary: true, version: probe.version, recognizedVersion: false },
-      diagnostics: [{
-        code: "claude-version-unrecognized",
-        severity: "warning",
-        message: `Claude Code ${probe.version} has no captured compatibility fixture; launch-mode support is unverified for this exact version.`,
-      }],
-    };
-  }
+  const compat = inspectClaudeCompatibility({
+    version: probe.version,
+    capturedFrom: [`live probe: claude --version / claude --help (${probe.version})`],
+    help: probe.help,
+  });
 
-  const compat = inspectClaudeCompatibility(fixture);
   return {
     projectRoot,
     state: "ready",
     evidence: {
       binary: true,
       version: probe.version,
-      recognizedVersion: true,
       interactive: compat.launch.interactive,
       exec: compat.launch.exec,
       resumeById: compat.launch.resumeById,

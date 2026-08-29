@@ -11,10 +11,9 @@ describe("default AdapterRegistry", () => {
     const registry = createDefaultAdapterRegistry();
     expect(registry.list().map((adapter) => adapter.runnerId)).toEqual(["pi", "opencode", "codex", "claude"]);
     expect(registry.get("codex").buildLaunchPlan).toBeFunction();
-    // Claude is Phase 1 (detection/composition only) as of add-claude-code-runner-support;
-    // buildLaunchPlan lands in Phase 2 and is intentionally absent (optional on RunnerAdapter)
-    // until then, per that change's runner-adapter.ts.
-    expect(registry.get("claude").buildLaunchPlan).toBeUndefined();
+    // Claude has Phase 1 (detection/composition) and Phase 2 (launch) as of
+    // add-claude-code-runner-support; buildDeveloperTeamInstallPlan etc. remain Phase 3/4.
+    expect(registry.get("claude").buildLaunchPlan).toBeFunction();
   });
 
   test("construction and innocuous inspection do not create runner home/config paths", async () => {

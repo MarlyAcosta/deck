@@ -102,38 +102,73 @@ real observed JSON shape.
   identically for all runners) to report version and compatibility-fixture match, distinguishing
   "binary present" from "binary present and launch-compatible" per REQ-CLD-COMPAT-002.
 
-**Verification:** Three fixture-driven test cases in `runner-adapter.test.ts`, all passing:
-binary absent (`isAvailable: false`), binary present with a version matching a captured fixture
-(`isAvailable: true`, version reported), and binary present with an unrecognized version
-(`state: "degraded"`, `claude-version-unrecognized` diagnostic — not silently treated as ready).
+**Verification:** Fixture-driven test cases in `runner-adapter.test.ts`, all passing: binary
+absent (`isAvailable: false`); binary present with version reported.
 
-## Phase 2: Launch
+**Corrected during Phase 2 (a real bug caught by a failing test, not by inspection):** the
+original implementation looked up a *static captured fixture* by version number
+(`findClaudeFixture(probe.version)`) rather than deriving compatibility from the actually-probed
+live `--help` text — meaning it would report whatever the captured fixture said, not what the
+installed binary actually does, and any version not in the fixture map fell back to a
+`"degraded"` state with zero evidence even when the live text plainly supported every launch
+mode. Fixed to match Codex's proven precedent (`inspectCodexProject` parses `probe.help`
+directly, never a fixture lookup): compatibility is now always derived from the live probe.
+Captured fixtures exist only for `compatibility.test.ts`'s offline determinism, never for this
+runtime path. `inspectProject` no longer has a `"degraded"` branch — it's `"blocked"` (binary
+missing) or `"ready"` with evidence narrowed to whatever the live text actually shows.
 
-### Task 2.1: Implement `buildClaudeLaunchPlan`
+## Phase 2: Launch — COMPLETE
 
-- Implement all four `RunnerLaunchInput` modes per `design.md`'s launch contract section.
-- Implement the owned-policy-token invariant check (REQ-CLD-RUN-002/003).
-- Implement stdin-only prompt delivery with `MAX_RUNNER_STDIN_PAYLOAD_BYTES` bounding
-  (REQ-CLD-RUN-004) and opaque session-id validation (REQ-CLD-RUN-005).
-- Implement the output-capture contract decided in Task 0.3.
-- For `interactive` and `exec` (new-session modes), pass `input.modelId` through as a `--model`
-  flag (Phase 0 confirms the exact flag name) when present, using the same bounded-scalar
-  validation as the policy token — mirroring Codex's `launch.ts` handling of `input.modelId`.
-  Resume modes MUST NOT reinject a model override (same precedent as Codex's resume behavior).
+### Task 2.1: Implement `buildClaudeLaunchPlan` — DONE, with one corrected design decision
 
-**Verification:** Contract tests cover: ready plans for all four modes, blocked launch on a
-malformed session id, blocked launch on an oversized/invalid stdin payload, blocked launch if
-the owned-policy invariant is violated, unsupported result for a mode the compatibility fixture
-doesn't advertise.
+- Built `packages/adapter-claude/src/launch.ts`: `buildClaudeLaunchPlan()` covers all four
+  `RunnerLaunchInput` modes, the owned-policy-token invariant (`hasOwnedLaunchPolicy`,
+  REQ-CLD-RUN-002/003), stdin-only prompt delivery bounded by `MAX_RUNNER_STDIN_PAYLOAD_BYTES`
+  (REQ-CLD-RUN-004), opaque session-id validation (REQ-CLD-RUN-005), and `--model` pass-through
+  on new sessions only (mirroring Codex's `launch.ts`). Wired into
+  `ClaudeRunnerAdapter.buildLaunchPlan` via `inspectProject`-derived feature flags.
+- **Corrected during implementation, not assumed correct:** the output-capture contract decided
+  in Task 0.3 ("adapter redirects captured stdout to a Deck-managed tmpfile") turned out to be
+  unimplementable as stated — reading `apps/cli/src/runner-launch-command.ts`'s
+  `trustedFinalAssistantMessage()` showed it only ever *reads* a file at `contract.path`; it
+  never writes one. Codex's file exists because the `codex` subprocess itself writes it via
+  `--output-last-message <path>`; Claude has no equivalent flag, so a `source: "file"` contract
+  would have silently produced no final message on every exec launch. Fixed properly rather than
+  worked around: added a `"stdout"` variant to `RunnerLaunchPlan.outputCapture.finalAssistantMessage`
+  in `packages/core/src/runner-adapter.ts` (a discriminated union now, `file` keeps `path`;
+  `stdout` has none) and a matching branch in `trustedFinalAssistantMessage()` that reads the
+  already-captured, already-redacted process stdout instead of a filesystem path. This is a
+  small, shared (not Claude-specific) change — user-approved before making it. The captured
+  content is Claude's raw JSON result object (not yet extracted to just the `result` field);
+  that extraction is flagged as Phase 4 work via an `info`-severity diagnostic in every exec
+  launch plan.
 
-### Task 2.2: Per-launch role/system-prompt injection
+**Verification — actually run:** `bun test packages/adapter-claude`: 55 pass (26 new since
+Phase 1). Full `bun test`: 4674 pass / 24 fail / 3 errors (308 files) — diffed against a fresh
+stash-based pre-Phase-2 baseline with the exact same failing-test-name set (`diff` exit 0,
+timings stripped): zero regressions, including in the shared `runner-launch-command.ts` this
+task touched. `bunx tsc --noEmit`: 0 errors from any touched file (6 of my own were caught and
+fixed — test assertions accessing `.code` on a `RunnerLaunchResult` without narrowing past the
+`"ready"` variant first). Contract tests cover: ready plans for all four modes; blocked launch
+on a malformed/flag-like/newline-containing session id; blocked launch on an oversized stdin
+payload; blocked launch on an unsafe `--model` value; the owned-policy token is always argv[0..1]
+exactly once; `stdout`-sourced (not file-sourced) output capture on exec; unsupported result for
+a mode the live-probed help text doesn't advertise.
 
-- Implement bounded, sanitized system-prompt injection for new sessions (REQ-CLD-RUN-006).
-- Confirm resume modes do not reinject a system-prompt override (matching Codex's "resume
-  preserves existing history" behavior).
+### Task 2.2: Per-launch role/system-prompt injection — mechanism done, not yet wired with content
 
-**Verification:** A test proves no write occurs to `~/.claude/settings.json` (mocked home
-directory) during any launch mode.
+- `buildClaudeLaunchPlan()` accepts an optional `ClaudeNewSessionBootstrap { systemPromptAppend }`
+  and, when present, emits it via bounded (`MAX_CLAUDE_BOOTSTRAP_BYTES = 4096`), sanitized
+  `--append-system-prompt` on new sessions only (REQ-CLD-RUN-006) — resume modes never receive
+  one, verified by a passing test.
+- `ClaudeRunnerAdapter.buildLaunchPlan` does not pass a `bootstrap` yet — there is no Developer
+  Team role content to inject until Phase 3 builds `.claude/agents/*.md` materialization. This is
+  intentional, not an oversight: the mechanism is real and tested; wiring it to real content is
+  explicitly Phase 3's job.
+
+**Verification:** `launch.test.ts` proves resume modes never carry `--append-system-prompt` even
+when a bootstrap is supplied, and that an invalid/oversized bootstrap blocks the launch rather
+than silently truncating or omitting it.
 
 ## Phase 3: Developer Team materialization
 

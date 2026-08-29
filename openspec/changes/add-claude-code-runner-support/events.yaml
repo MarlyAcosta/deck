@@ -73,3 +73,14 @@ events:
     notes:
       - "Phase 1 (minimal composition and detection) complete: @deck/adapter-claude scaffolded and registered; real detectRuntimes/inspectProject; every non-optional RunnerAdapter method implemented (real or phase-labeled throwing stub)."
       - "Verified via stash-based before/after comparison: 29/29 new tests pass; full suite's failing-test-name set is byte-for-byte identical pre/post (zero regressions); tsc clean for all touched files."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-08-29"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Phase 2 (launch) complete: buildClaudeLaunchPlan for all four modes, wired into ClaudeRunnerAdapter.buildLaunchPlan."
+      - "Two real design corrections caught during implementation: output-capture needed a new source:\"stdout\" variant on the shared RunnerLaunchPlan type (Codex's file-based contract doesn't apply — Claude has no --output-last-message equivalent); preflight.ts was deriving compatibility from a static fixture lookup instead of the live probed help text, fixed to match Codex's precedent."
+      - "Verified via stash-based before/after full-suite diff (diff exit 0 on failing-test names): zero regressions, including in the shared runner-launch-command.ts/core/runner-adapter.ts this phase touched."

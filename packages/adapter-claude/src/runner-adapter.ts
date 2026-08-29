@@ -34,6 +34,8 @@ import {
   type RunnerAdapter,
   type RunnerBackupResult,
   type RunnerDeveloperTeamInstallPlan,
+  type RunnerLaunchInput,
+  type RunnerLaunchResult,
   type RunnerProjectInspection,
   type RunnerRollbackResult,
   type RunnerVerifyResult,
@@ -44,6 +46,7 @@ import {
 
 import { CLAUDE_DEVELOPMENT_TEAMS } from "./team-catalog";
 import { inspectClaudeProject, type ClaudePreflightEffects, type ClaudeProbeResult } from "./preflight";
+import { buildClaudeLaunchPlan } from "./launch";
 
 export type ClaudeRunnerAdapterOptions = {
   preflight?: ClaudePreflightEffects;
@@ -82,6 +85,32 @@ export class ClaudeRunnerAdapter implements RunnerAdapter {
 
   async inspectProject(projectRoot: string): Promise<RunnerProjectInspection> {
     return inspectClaudeProject(projectRoot, this.#preflight);
+  }
+
+  // -------------------------------------------------------------------------
+  // Launch — Phase 2
+  // -------------------------------------------------------------------------
+
+  async buildLaunchPlan(input: RunnerLaunchInput): Promise<RunnerLaunchResult> {
+    const inspection = await this.inspectProject(input.projectRoot);
+    if (inspection.state === "blocked") {
+      return { status: "blocked", code: "claude-preflight-blocked", diagnostics: inspection.diagnostics };
+    }
+    // An unrecognized version (state "degraded") leaves evidence.{interactive,exec,...}
+    // unset, so every feature flag below evaluates false and buildClaudeLaunchPlan naturally
+    // returns "unsupported" for every mode — failing closed without special-case logic.
+    const features = {
+      interactive: inspection.evidence.interactive === true,
+      exec: inspection.evidence.exec === true,
+      resumeById: inspection.evidence.resumeById === true,
+      resumeLatest: inspection.evidence.resumeLatest === true,
+    };
+    // No bootstrap yet: per-launch role/system-prompt content is Phase 3 (Developer Team
+    // materialization) territory. Launch plans build correctly without one.
+    const launch = buildClaudeLaunchPlan(input, features);
+    return launch.status === "ready"
+      ? { ...launch, diagnostics: [...inspection.diagnostics, ...launch.diagnostics] }
+      : launch;
   }
 
   async detectRuntimes(input?: RuntimeDetectionInput): Promise<readonly RuntimeStatus[]> {
@@ -143,10 +172,6 @@ export class ClaudeRunnerAdapter implements RunnerAdapter {
   getCapability(_capabilityId: string): unknown { return notYetImplemented("getCapability", "Phase 4"); }
   getCapabilityIds(): readonly string[] { return notYetImplemented("getCapabilityIds", "Phase 4"); }
   getSelectableTools(): unknown[] { return notYetImplemented("getSelectableTools", "Phase 4"); }
-
-  // buildLaunchPlan is intentionally omitted (optional on RunnerAdapter) until Phase 2 —
-  // omitting an optional method is a more honest signal than stubbing one the type system
-  // doesn't even require yet.
 }
 
 export function createClaudeRunnerAdapter(options: ClaudeRunnerAdapterOptions = {}): RunnerAdapter {

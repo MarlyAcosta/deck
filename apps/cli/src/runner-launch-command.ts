@@ -560,7 +560,7 @@ export async function runRunnerLaunch(input: RunRunnerLaunchInput): Promise<RunR
       try {
         outcome = await executeRunnerLaunchPlan(executableLaunch.plan, input.processEffects);
         closeReason = outcome.signal ? "signal" : "normal";
-        finalAssistant = await trustedFinalAssistantMessage(executableLaunch.plan, input.processEffects);
+        finalAssistant = await trustedFinalAssistantMessage(executableLaunch.plan, input.processEffects, outcome.stdout);
         memoryCapture = loopbackBridge
           ? { diagnostics: [], metrics: [] }
           : await safeMemoryCapture(() => memoryHost.captureOutcome({ exitCode: outcome.exitCode, signal: outcome.signal, finalAssistantMessage: finalAssistant.content }));
@@ -640,9 +640,26 @@ function resolveLaunchDeckConfig(deckConfig: RunRunnerLaunchInput["launch"]["dec
   return deckConfig;
 }
 
-async function trustedFinalAssistantMessage(plan: RunnerLaunchPlan, effects: RunnerProcessEffects): Promise<{ content?: string; diagnostics: readonly { code: string; severity: "warning"; message: string }[] }> {
+async function trustedFinalAssistantMessage(
+  plan: RunnerLaunchPlan,
+  effects: RunnerProcessEffects,
+  capturedStdout?: string,
+): Promise<{ content?: string; diagnostics: readonly { code: string; severity: "warning"; message: string }[] }> {
   const contract = plan.outputCapture?.finalAssistantMessage;
-  if (!contract || contract.trust !== "runner-native-final-assistant" || contract.source !== "file") return { diagnostics: [] };
+  if (!contract || contract.trust !== "runner-native-final-assistant") return { diagnostics: [] };
+  if (contract.source === "stdout") {
+    if (capturedStdout === undefined) {
+      return { diagnostics: [{ code: "runner-output-capture-unavailable", severity: "warning", message: "Trusted final-assistant capture skipped: no captured stdout available (launch did not use piped stdio)." }] };
+    }
+    const boundedOutput = bounded(capturedStdout, contract.maxBytes);
+    const content = boundedOutput.value.trim() || undefined;
+    return {
+      content,
+      diagnostics: boundedOutput.truncated
+        ? [{ code: "runner-output-capture-truncated", severity: "warning", message: `Trusted final-assistant stdout capture was truncated to ${contract.maxBytes} bytes.` }]
+        : [],
+    };
+  }
   if (!contract.path || contract.path.includes("\0")) {
     return { diagnostics: [{ code: "runner-output-capture-invalid", severity: "warning", message: "Trusted final-assistant capture skipped: invalid output file path." }] };
   }

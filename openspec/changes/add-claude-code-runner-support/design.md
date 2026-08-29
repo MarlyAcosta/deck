@@ -132,14 +132,30 @@ The full result — including the final assistant text in `result`, `session_id`
 **stdout**. There is no file-based channel; Claude Code has no equivalent of Codex's
 `--output-last-message`.
 
-**Decision:** implement Option 1 from the original two candidates — the adapter redirects
-captured stdout to a Deck-managed tmpfile itself (`stdio: "pipe"`, then the adapter writes the
-captured buffer to a tmpfile before returning `outputCapture.finalAssistantMessage` with
-`source: "file"`). This keeps the existing `outputCapture` contract and its consumers unchanged
-everywhere else in the codebase — the only new logic lives inside `@deck/adapter-claude`. The
-adapter's JSON parser MUST read `result` as the trusted final message text and MUST treat
-`is_error: true` or a non-`"success"` `subtype` as a failed run rather than trusting `result`
-blindly.
+**Decision, corrected during Phase 2 implementation:** Option 1 (adapter redirects captured
+stdout to a Deck-managed tmpfile, keeping `source: "file"`) turned out to be unimplementable as
+originally stated. Reading `apps/cli/src/runner-launch-command.ts`'s
+`trustedFinalAssistantMessage()` showed it only ever *reads* the path in `contract.path` — it
+never writes one. Codex's file-based contract works because the `codex` *subprocess itself*
+writes that file via `--output-last-message <path>`; nothing in the CLI populates it generically.
+Claude has no equivalent flag, so a `source: "file"` contract for Claude would have pointed at a
+path nothing ever writes, silently producing no final message on every exec launch — a real bug,
+not a theoretical one, caught by reading the consumer before shipping rather than after.
+
+**Actual decision:** added a `"stdout"` variant to
+`RunnerLaunchPlan.outputCapture.finalAssistantMessage` in `packages/core/src/runner-adapter.ts`
+(now a discriminated union: `{ source: "file"; path: string; ... }` or
+`{ source: "stdout"; ... }`, no path), plus a matching branch in
+`trustedFinalAssistantMessage()` that reads the already-captured, already-redacted process
+stdout directly instead of touching the filesystem. This is a small, deliberate, user-approved
+change to shared code (not Claude-specific) — Pi/OpenCode/Codex are unaffected (confirmed via a
+stash-based before/after full-suite run with an identical failing-test set). Claude's exec plan
+sets `source: "stdout"`, `route: "claude-exec-stdout-json"`.
+
+The captured content is Claude's raw JSON result object (containing `result`, `session_id`,
+`is_error`, `total_cost_usd`, `usage`, etc.), not yet narrowed to just the `result` field — every
+exec launch plan carries an explicit `info`-severity `claude-output-capture-raw-json` diagnostic
+flagging that JSON extraction is Phase 4 (verification/doctor) work, not silently deferred.
 
 ## Package layout
 

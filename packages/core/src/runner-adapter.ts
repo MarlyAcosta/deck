@@ -213,14 +213,30 @@ export type RunnerLaunchPlan = {
   bridgeBinding?: Readonly<{ surface: string; mode: RunnerLaunchInput["mode"]; evidence: string }>;
   /** Content capture contract. Omitted means stdout/stderr are not trusted conversation channels. */
   outputCapture?: Readonly<{
-    finalAssistantMessage?: Readonly<{
-      source: "file";
-      path: string;
-      trust: "runner-native-final-assistant";
-      route: string;
-      maxBytes: number;
-      cleanup?: boolean;
-    }>;
+    /**
+     * Two sources exist because runners differ in how they deliver a final result:
+     * - "file": the runner process itself writes the final message to a path Deck gave it
+     *   (e.g. Codex's `--output-last-message <path>`). The CLI only ever reads this path; it
+     *   never writes it, so a runner with no such flag must not use this source.
+     * - "stdout": the runner has no file-output flag, but its captured stdout (from a
+     *   `stdio: "pipe"` launch) already contains the final result. The CLI reads it from the
+     *   already-captured, already-redacted process outcome — no filesystem access involved.
+     */
+    finalAssistantMessage?:
+      | Readonly<{
+          source: "file";
+          path: string;
+          trust: "runner-native-final-assistant";
+          route: string;
+          maxBytes: number;
+          cleanup?: boolean;
+        }>
+      | Readonly<{
+          source: "stdout";
+          trust: "runner-native-final-assistant";
+          route: string;
+          maxBytes: number;
+        }>;
   }>;
 };
 
