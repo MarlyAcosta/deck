@@ -1,0 +1,61 @@
+schema: spec-registry-v1
+changeId: add-claude-code-runner-support
+name: Add Claude Code CLI Runner Support
+currentPhase: tasks
+status: completed
+artifacts:
+  exploration: exploration.md
+  proposal: proposal.md
+  spec: spec.md
+  design: design.md
+  tasks: tasks.md
+provenance:
+  - phase: explore
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-08-29"
+    registryWrite: non-deferred
+    note: "Directly inspected packages/core/src/runner-adapter.ts, adapter-registry.ts, runner-adapters.ts, packages/adapter-codex/src/* and packages/adapter-opencode/src/* in a local clone; researched Anthropic's headless-mode, MCP, and Agent SDK docs for the integration decision."
+  - phase: proposal
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-08-29"
+    registryWrite: non-deferred
+    note: "Defined staged Claude Code adapter scope modeled on add-first-class-codex-runner-support, with explicit out-of-scope items and the subprocess-vs-Agent-SDK decision."
+  - phase: spec
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-08-29"
+    registryWrite: non-deferred
+    note: "Specified composition, compatibility detection, safe launch, safe materialization, instruction translation, models, and honest capability-reporting requirements plus acceptance scenarios."
+  - phase: design
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-08-29"
+    registryWrite: non-deferred
+    note: "Recorded the subprocess-over-Agent-SDK architectural decision with rationale, the reused (unmodified) launch contract, the output-capture design gap vs Codex, package layout, and config-merge strategy reuse."
+  - phase: tasks
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-08-29"
+    registryWrite: non-deferred
+    note: "Created six staged phases (compatibility spikes, composition, launch, materialization, models/catalog/doctor, documentation) with per-task verification."
+  - phase: tasks
+    agent: general-purpose-review-agent
+    model: claude-sonnet-5
+    timestamp: "2026-08-29"
+    registryWrite: non-deferred
+    note: "Independent review (fresh context, no shared rationale with the author) verified every load-bearing claim in proposal.md/spec.md/design.md/tasks.md against real source line-by-line (packages/core/src/runner-adapter.ts, adapter-registry.ts, packages/adapter-codex/src/*, packages/adapter-opencode/src/config-merge.ts, model-catalog.ts). Verdict: APPROVE WITH NOTES. Three corrections applied: (1) tasks.md Task 1.1 now requires stub implementations of all ~20 non-optional RunnerAdapter methods before the package type-checks, distinct from real Phase 3-4 work; (2) design.md's launch contract and tasks.md Task 2.1 now explicitly pass input.modelId through as --model on new sessions, mirroring Codex's launch.ts, instead of silently omitting it; (3) fixed a REQ-CLD-DOC-001 to REQ-CLD-DOC-002 citation mismatch in design.md's Deferred section."
+  - phase: tasks
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-08-29"
+    registryWrite: non-deferred
+    note: "Phase 0 (compatibility and safety spikes) completed with real evidence against an authenticated claude v2.1.251 install, not documentation research: (1) captured full --help output, confirmed every flag cited in spec.md/design.md exists with the stated spelling; (2) tested three candidate launch-policy mechanisms live and found --permission-mode bypassPermissions works while the name-similar --dangerously-skip-permissions (with or without --allow-dangerously-skip-permissions) is blocked by an undocumented auto-mode classifier; (3) ran claude -p --output-format json live and confirmed the full result (including session_id, is_error, total_cost_usd, usage) prints to stdout as one JSON object, with no file-based output channel at all, settling the outputCapture design question. design.md and tasks.md updated with the real evidence; deck openspec validate remains clean."
+  - phase: tasks
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-08-29"
+    registryWrite: non-deferred
+    note: "Phase 1 (minimal composition and detection) complete: scaffolded @deck/adapter-claude (10 files), registered in apps/cli/src/runner-adapters.ts and apps/cli/package.json, implemented real detectRuntimes/inspectProject (Task 1.2), and implemented every non-optional RunnerAdapter method (real for trivial surfaces, phase-labeled throwing stubs for Phase 3/4 surfaces). Verified with a stash-based before/after comparison on this exact checkout (not a separate clone): bun test packages/adapter-claude is 29/29 pass; full bun test is 4648 pass/24 fail/3 errors across 307 files with the failing-test-name set byte-for-byte identical to the pre-Phase-1 state (zero regressions); bunx tsc --noEmit is clean for every file this change touches, with the 11 remaining errors confirmed pre-existing and unrelated (other adapters' cross-package type resolution) via the same stash method. Also fixed an unrelated pre-existing repo-hygiene issue found along the way: 21 zero-byte Windows Zone.Identifier artifact files tracked in packages/core/src/skills/external/ (committed separately, not part of this change's diff)."
+next_action: "Phase 1 is complete and verified. Start Phase 2 (buildClaudeLaunchPlan for interactive/exec/resume-by-id/resume-latest, using the launch-policy token and output-capture decisions already confirmed live in Phase 0)."

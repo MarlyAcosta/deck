@@ -14,6 +14,7 @@ import { createAdapterRegistry, type AdapterRegistry } from "@deck/core";
 import { createPiRunnerAdapter } from "@deck/adapter-pi";
 import { createOpenCodeRunnerAdapter } from "@deck/adapter-opencode";
 import { createCodexRunnerAdapter } from "@deck/adapter-codex";
+import { createClaudeRunnerAdapter } from "@deck/adapter-claude";
 import { getWebSearchProviderDescriptor } from "./web-search-provider";
 
 /**
@@ -38,6 +39,7 @@ export type DefaultAdapterRegistryOptions = {
   pi?: Parameters<typeof createPiRunnerAdapter>[0];
   opencode?: Parameters<typeof createOpenCodeRunnerAdapter>[0];
   codex?: Parameters<typeof createCodexRunnerAdapter>[0];
+  claude?: Parameters<typeof createClaudeRunnerAdapter>[0];
 };
 
 export function createDefaultAdapterRegistry(options: DefaultAdapterRegistryOptions = {}): AdapterRegistry {
@@ -53,6 +55,9 @@ export function createDefaultAdapterRegistry(options: DefaultAdapterRegistryOpti
   registry.register("codex", createCodexRunnerAdapter({
     webSearchProviderResolver: getWebSearchProviderDescriptor,
     ...options.codex,
+  }));
+  registry.register("claude", createClaudeRunnerAdapter({
+    ...options.claude,
   }));
   return registry;
 }

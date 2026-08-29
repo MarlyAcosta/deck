@@ -8,6 +8,7 @@
     "build:binary": "bun run ../../scripts/build-binaries.ts"
   },
   "dependencies": {
+    "@deck/adapter-claude": "workspace:*",
     "@deck/adapter-codex": "workspace:*",
     "@deck/adapter-opencode": "workspace:*",
     "@deck/adapter-pi": "workspace:*",

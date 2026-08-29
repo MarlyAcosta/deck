@@ -1,0 +1,75 @@
+schema: spec-registry-events-v1
+events:
+  - phase: explore
+    status: completed
+    event: explore.completed
+    artifact: proposal.md
+    timestamp: "2026-08-29"
+    actor: claude-code-session
+    notes:
+      - "Inspected the RunnerAdapter contract, the OpenCode and Codex reference adapters, and Anthropic's Claude Code headless-mode / MCP / Agent SDK documentation."
+  - phase: proposal
+    status: completed
+    event: proposal.completed
+    artifact: proposal.md
+    timestamp: "2026-08-29"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Scoped a staged Claude Code adapter modeled on the Codex precedent; decided subprocess over Agent SDK."
+  - phase: spec
+    status: completed
+    event: spec.completed
+    artifact: spec.md
+    timestamp: "2026-08-29"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "39 RFC 2119 requirements across composition, compatibility, launch safety, materialization, instruction translation, models, and documentation honesty, plus 9 acceptance scenarios."
+  - phase: design
+    status: completed
+    event: design.completed
+    artifact: design.md
+    timestamp: "2026-08-29"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Recorded the subprocess-vs-Agent-SDK decision, reused the existing launch contract unmodified, and flagged the stdout-vs-file output-capture gap against Codex's precedent as an open Phase 0 decision."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-08-29"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Six phases: compatibility spikes, minimal composition, launch, Developer Team materialization, models/catalog/doctor, documentation and hardening."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-08-29"
+    actor: general-purpose-review-agent
+    registry_write: non-deferred
+    notes:
+      - "Independent line-by-line review against real source. Verdict: APPROVE WITH NOTES."
+      - "Applied 3 corrections: explicit RunnerAdapter stub-implementation task in Phase 1, explicit --model pass-through in Phase 2, fixed a requirement-id citation in design.md."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-08-29"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Phase 0 (compatibility and safety spikes) completed live against authenticated claude v2.1.251: real --help fixture captured, launch-policy token decided (--permission-mode bypassPermissions, not the name-similar --dangerously-skip-permissions which an undocumented auto-mode classifier blocks), and the output-capture design question settled (stdout JSON, no file channel)."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-08-29"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Phase 1 (minimal composition and detection) complete: @deck/adapter-claude scaffolded and registered; real detectRuntimes/inspectProject; every non-optional RunnerAdapter method implemented (real or phase-labeled throwing stub)."
+      - "Verified via stash-based before/after comparison: 29/29 new tests pass; full suite's failing-test-name set is byte-for-byte identical pre/post (zero regressions); tsc clean for all touched files."
