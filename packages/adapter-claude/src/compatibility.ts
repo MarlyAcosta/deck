@@ -42,10 +42,28 @@ export type ClaudeCompatibility = {
     override: boolean;
   };
   bare: boolean;
+  /**
+   * `--effort <level>` — Claude Code's thinking/reasoning-effort control (added in Phase 4;
+   * missed in the original Phase 0 excerpt). Levels are parsed from the live help text, not
+   * hardcoded, matching the same "derive from what was actually probed" discipline as every
+   * other field here — if a future release renames or reorders the choices, this reflects it
+   * automatically instead of silently going stale.
+   */
+  effort: {
+    supported: boolean;
+    levels: readonly string[];
+  };
 };
 
 function has(help: string, needle: string | RegExp): boolean {
   return typeof needle === "string" ? help.includes(needle) : needle.test(help);
+}
+
+/** Parses `--effort <level> ... (low, medium, high, xhigh, max)` into an ordered level list. */
+function parseEffortLevels(help: string): readonly string[] {
+  const match = help.match(/--effort <level>[\s\S]{0,120}\(([a-z, ]+)\)/);
+  if (!match) return [];
+  return match[1]!.split(",").map((level) => level.trim()).filter(Boolean);
 }
 
 /**
@@ -79,6 +97,10 @@ export function inspectClaudeCompatibility(release: ClaudeReleaseFixture): Claud
       override: has(help, /--settings <file-or-json>/),
     },
     bare: has(help, "--bare"),
+    effort: (() => {
+      const levels = parseEffortLevels(help);
+      return { supported: levels.length > 0, levels };
+    })(),
   };
 }
 

@@ -280,30 +280,90 @@ afterward; fixed by rewording to `<skillId>` instead of a glob-style asterisk.
   catalog functions already exist and were confirmed usable during Phase 3 exploration; only the
   Claude-specific file-path wiring is missing.
 
-## Phase 4: Models, capability catalog, doctor
+## Phase 4: Models, capability catalog, doctor — COMPLETE
 
-### Task 4.1: Model catalog wiring
+**Real bug found and fixed, not assumed away:** Deck's canonical catalog IDs
+(`anthropic/claude-opus-4`, etc.) do not resolve as Claude Code `--model` values — confirmed
+live (`is_error: true, api_error_status: 404` for both the bare and fully-qualified catalog ID).
+Only Claude's own aliases (`sonnet`/`opus`/`haiku`) work. This was a real, load-bearing gap in
+Phase 2's `launch.ts`, which passed `input.modelId` straight through unmapped, undetected until
+Phase 4 tested a canonical ID live rather than the bare alias Phase 2's own smoke test happened
+to use. Fixed with `src/models.ts` (`nativeClaudeModelAlias`/`canonicalModelIdFromNativeAlias`),
+wired into both `buildLaunchPlan` (Phase 2's launch path) and `agent-files.ts` (Phase 3's
+materialized frontmatter, which had the identical bug). See design.md for the full account.
 
-- Implement `getModelCatalog`/`readModelAssignments`/`readThinkingAssignments` reusing the
-  existing `anthropic` provider entries (REQ-CLD-MDL-001/002).
+**Also found: `--effort <level>` (`low, medium, high, xhigh, max`)**, Claude Code's
+thinking/reasoning-effort control — missed in the Phase 0 condensed excerpt (the flag exists,
+just wasn't captured). Confirmed live, including that the binary itself degrades gracefully on
+an invalid value (stderr warning, `is_error: false`) — Deck still validates client-side and
+fails closed rather than depending on that fallback.
 
-**Verification:** Assigning `anthropic/claude-opus-4` to a role round-trips through
-plan→apply→read.
+### Task 4.1: Model catalog wiring — DONE, with the model-mapping bug above fixed along the way
 
-### Task 4.2: Capability catalog with honest gaps
+- `getModelCatalog` was already real since Phase 1 (reuses the `anthropic` provider/models,
+  REQ-CLD-MDL-001).
+- `readModelAssignments`/`readThinkingAssignments` now read real state back from
+  `.claude/agents/*.md` frontmatter (`model:` mapped back to the canonical catalog ID via
+  `canonicalModelIdFromNativeAlias`; a `# deck-effort: "..."` YAML-comment line Deck adds itself,
+  since Claude Code's own frontmatter has no native reasoning-effort field to read back from) —
+  there is nowhere else project-local for Claude to persist this, so the agent files serve as
+  both the role definition and the assignment record.
+- `getThinkingLevels`/`supportsThinking`/`resolveThinking`/`getDefaultThinking` are wired to a
+  live-derived `#lastKnownThinkingLevels` cache (populated by `inspectProject`, empty/honest
+  until some async call has run once — never a hardcoded guess). `getDefaultThinking` falls back
+  to the first advertised level with no confirmed-default claim (no default is documented
+  anywhere Anthropic-side); same pragmatic, explicitly-flagged choice Codex's own
+  `getDefaultThinking` makes for its unconfirmed-default case.
+- `buildClaudeLaunchPlan` gained a 4th parameter, `availableEffortLevels`, validating
+  `reasoningLevel` against it before emitting `--effort` — mirrors the `--model` scalar-safety
+  pattern exactly.
 
-- Build `getCapabilityInventory`/`getCapability`/`getCapabilityIds` listing every supported
-  capability and every explicit gap deferred from proposal.md's "Out of scope" (REQ-CLD-DOC-002).
+**Verification — real, not assumed:** live-tested `--model claude-opus-4` (bare, stripped) and
+`--model anthropic/claude-opus-4` (fully-qualified) against the authenticated binary — both
+`404`. Live-tested `sonnet`/`opus`/`haiku` — all work. Live-tested `--effort low` and an invalid
+`--effort bogus-level` (binary warns and falls back, doesn't fail the launch). A full adapter
+round trip (`buildDeveloperTeamInstallPlan` with `modelAssignments`/`thinkingAssignments` →
+`applyDeveloperTeamInstall` → `readModelAssignments`/`readThinkingAssignments`) is covered by an
+integration test on a real filesystem, and a final live end-to-end run (adapter → real spawned
+`claude` process, not mocked) confirmed `anthropic/claude-haiku-4` + `reasoningLevel: "low"`
+resolves correctly (`is_error: false`, `modelUsage` key `claude-haiku-4-5-20251001`).
 
-**Verification:** Every "Out of scope" item from `proposal.md` has a corresponding gap entry
-in the catalog; none are silently absent.
+### Task 4.2: Capability catalog with honest gaps — DONE, intentionally simpler than Codex's
 
-### Task 4.3: Doctor integration
+- `src/capability-catalog.ts`: a flat `CLAUDE_CAPABILITY_CATALOG` (not wired into the shared
+  cross-runner `defineRunnerCapabilityContribution` registry Codex participates in — recorded as
+  a deliberate, separate decision in design.md, not a hidden gap) listing every supported
+  surface this change actually built plus an explicit `"gap"` entry for every item in
+  proposal.md's "Out of scope" section and Task 3.6's deferred skills (REQ-CLD-DOC-002).
+- `getCapabilityInventory` reflects real on-disk state (`isInstalled` checks whether
+  `.claude/agents/` actually exists in the given project), not a static guess.
 
-- Implement `diagnoseProject` for `deck doctor`.
+**Verification:** a test enumerates proposal.md's "Out of scope" items and Task 3.6 and confirms
+each has a matching `"gap"` catalog entry with a non-empty diagnostic; `getCapabilityInventory`
+is tested before and after a real `applyDeveloperTeamInstall` on a temp filesystem, confirming
+`isInstalled` flips from `false` to `true`.
 
-**Verification:** `deck doctor` against a scratch project with a Claude install reports
-meaningful, non-`unknown` diagnostics.
+### Task 4.3: Doctor integration — DONE
+
+- `diagnoseProject` returns real, non-`unknown`-typed checks: binary presence/version,
+  launch-policy support, Developer Team materialization presence, and `CLAUDE.md` marker
+  presence — each derived from `inspectProject`/real filesystem checks, matching Codex's own
+  inline-typed `diagnoseProject` return shape (`RunnerDoctorCheck` is not actually exported from
+  `@deck/core`'s public barrel despite being part of the interface signature — confirmed by
+  checking, and confirmed Codex hits the same gap and works around it the same way).
+
+**Verification:** tested against a real temp project before and after Developer Team
+installation — `developer-team`/`claude-md` checks correctly flip from `"warning"` to `"ok"`;
+binary-absent case returns exactly one `"error"` check, nothing fabricated beyond it.
+
+**Cross-cutting verification for all of Phase 4:** `bun test packages/adapter-claude`: 117 pass,
+0 fail (up from 96 after Phase 3). Full `bun test`: 4736 pass / 24 fail / 3 errors across 315
+files — `diff` against the known-good baseline established across Phases 1–3 is byte-for-byte
+identical (exit 0). `bunx tsc --noEmit`: 0 new errors — two more instances of the same class of
+bug Phase 1 first caught (a class method declared with fewer parameters than the `RunnerAdapter`
+interface, type-checking fine through the interface but not when called on the concrete class
+directly) were caught and fixed in `getThinkingLevels`/`supportsThinking`/`getDefaultThinking`.
+This phase touched zero files outside `packages/adapter-claude`.
 
 ## Phase 5: Documentation and hardening
 

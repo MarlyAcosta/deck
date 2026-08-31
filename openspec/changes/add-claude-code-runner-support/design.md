@@ -250,6 +250,52 @@ Codex's Tasks 2.4/2.5 do materialize — are left for a follow-up change, since 
 TUI can select them for Claude yet anyway (that selection surface is Phase 4's capability
 catalog).
 
+## Models and thinking effort (CONFIRMED in Phase 4)
+
+**Real bug: canonical catalog IDs do not resolve as Claude Code model values.** Deck's shared
+`packages/core/src/model-catalog.ts` lists `anthropic/claude-sonnet-4`,
+`anthropic/claude-opus-4`, `anthropic/claude-haiku-4`. Tested live against the authenticated
+binary: `--model claude-opus-4` (bare, `anthropic/` stripped) and
+`--model anthropic/claude-opus-4` (fully qualified) both return
+`is_error: true, api_error_status: 404, result: "There's an issue with the selected model...".`
+Only Claude Code's own aliases — `sonnet`, `opus`, `haiku` (and presumably `fable`, per
+`--help`'s own example, not independently re-tested since it isn't in Deck's catalog) — resolve.
+Interestingly, `--model sonnet` actually resolves to `canonicalModel: "claude-sonnet-5"` in the
+live response — Deck's catalog display names ("Claude Sonnet 4") are themselves stale relative
+to what's actually being served, which is a pre-existing `packages/core/model-catalog.ts` content
+issue, out of scope for this adapter to fix, noted here only because it's what surfaced the
+model-mapping bug in the first place.
+
+This bug existed in Phase 2's `launch.ts` from the start (`input.modelId` was passed straight
+through to `--model` after only a "safe scalar" syntax check, never a real-model-exists check)
+and in Phase 3's `agent-files.ts` (`agent.model` written verbatim into subagent frontmatter). It
+went undetected through both phases' own live verification because those smoke tests happened to
+pass a bare alias (`"haiku"`) directly rather than exercising the real catalog-ID path a caller
+going through `getModelCatalog()` would actually use — a reminder that a live test only proves
+what it actually exercises, not the whole surface a feature claims to cover.
+
+**Fix:** `src/models.ts` defines an explicit 3-entry mapping table (canonical ID → native alias)
+plus its exact inverse, used in both `buildLaunchPlan` (launch-time `--model`) and
+`agent-files.ts` (persisted subagent frontmatter). An unmapped model is omitted with a warning
+diagnostic (`claude-model-omitted`), never passed through raw — same "unknown maps to omission,
+never a guess" discipline as REQ-CLD-MDL-002 already required.
+
+**`--effort <level>` (`low, medium, high, xhigh, max`)** was missed in the Phase 0 condensed
+`--help` excerpt (the flag exists; the excerpt just didn't keep that line) and found while
+researching Task 4.1. Confirmed live: a valid value works; an invalid one produces a stderr
+warning and the binary falls back to its own default without failing the launch
+(`is_error: false`) — Deck validates client-side against the live-parsed level list anyway and
+blocks on an unrecognized value, rather than depending on that graceful-fallback behavior.
+Levels are parsed from the live help text via regex (`compatibility.ts`), never hardcoded, so a
+future release renaming/reordering them is reflected automatically.
+
+**Where a per-role assignment actually lives:** Claude Code has no project-local config file for
+this the way Codex has `.codex/config.toml` role tables or OpenCode has `opencode.json`'s
+`agent` entries. The materialized `.claude/agents/<id>.md` frontmatter is the only project-local
+place available — `model:` (mapped to Claude's native alias) is a real Claude Code field;
+`# deck-effort: "..."` is a YAML comment Deck itself defines and reads back, since Claude Code
+has no native per-subagent reasoning-effort frontmatter field to reuse.
+
 ## Deferred: trusted execution boundary
 
 Codex's design required identifying a trusted runner-host bridge (dossier continuity, one-use

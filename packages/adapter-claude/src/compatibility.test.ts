@@ -53,5 +53,13 @@ describe("inspectClaudeCompatibility", () => {
     expect(compat.launchPolicy.supported).toBe(false);
     expect(compat.mcp.inlineConfig).toBe(false);
     expect(compat.bare).toBe(false);
+    expect(compat.effort.supported).toBe(false);
+    expect(compat.effort.levels).toEqual([]);
+  });
+
+  test("parses --effort levels from the live help text (Phase 4 — confirmed against a real install; missed in the original Phase 0 excerpt)", () => {
+    const compat = inspectClaudeCompatibility(fixture);
+    expect(compat.effort.supported).toBe(true);
+    expect(compat.effort.levels).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 });

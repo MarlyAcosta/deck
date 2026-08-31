@@ -180,17 +180,12 @@ describe("ClaudeRunnerAdapter Phase 3/4 surfaces throw with a clear phase pointe
     ["buildReviewPlan", () => new ClaudeRunnerAdapter().buildReviewPlan(undefined as never, undefined as never)],
     ["buildInstallationPlan", () => new ClaudeRunnerAdapter().buildInstallationPlan(undefined as never)],
     ["getNextScreen", () => new ClaudeRunnerAdapter().getNextScreen(undefined as never)],
-    ["getCapability", () => new ClaudeRunnerAdapter().getCapability("anything")],
-    ["getCapabilityIds", () => new ClaudeRunnerAdapter().getCapabilityIds()],
-    ["getSelectableTools", () => new ClaudeRunnerAdapter().getSelectableTools()],
   ])("%s throws referencing tasks.md", (name, call) => {
     expect(call).toThrow(/not implemented yet.*add-claude-code-runner-support\/tasks\.md/s);
   });
 
   test.each([
-    ["getCapabilityInventory", () => new ClaudeRunnerAdapter().getCapabilityInventory(undefined as never)],
     ["runAction", () => new ClaudeRunnerAdapter().runAction(undefined as never, undefined as never)],
-    ["inspectEnvironment", () => new ClaudeRunnerAdapter().inspectEnvironment()],
     ["reviewTools", () => new ClaudeRunnerAdapter().reviewTools()],
   ])("%s (async) rejects referencing tasks.md", async (name, call) => {
     await expect(call()).rejects.toThrow(/not implemented yet.*add-claude-code-runner-support\/tasks\.md/s);
@@ -252,6 +247,65 @@ describe("ClaudeRunnerAdapter Developer Team materialization — Phase 3, real f
       expect(secondApply.unchangedCount).toBe(secondPlan.files.length);
     });
   });
+
+  test("a model/thinking assignment round-trips through plan -> apply -> readModelAssignments/readThinkingAssignments (Task 4.1)", async () => {
+    await withTempDir(async (dir) => {
+      const adapter = new ClaudeRunnerAdapter();
+      const plan = adapter.buildDeveloperTeamInstallPlan({
+        ...baseInput(dir),
+        modelAssignments: { "deck-lead": "anthropic/claude-opus-4" },
+        thinkingAssignments: { "deck-lead": "xhigh" },
+      });
+      await adapter.applyDeveloperTeamInstall({ projectRoot: dir, plan, environmentId: "claude-development" });
+
+      const leadFile = await readFile(join(dir, ".claude", "agents", "deck-lead.md"), "utf-8");
+      expect(leadFile).toContain('model: "opus"');
+
+      expect(adapter.readModelAssignments(dir)).toEqual({ "deck-lead": "anthropic/claude-opus-4" });
+      expect(adapter.readThinkingAssignments(dir)).toEqual({ "deck-lead": "xhigh" });
+    });
+  });
+});
+
+describe("ClaudeRunnerAdapter.getThinkingLevels / buildLaunchPlan model mapping (Phase 4, real filesystem + real claude binary probe shape)", () => {
+  test("getThinkingLevels is empty until inspectProject has run once, then reflects the live-probed --effort choices", async () => {
+    const adapter = new ClaudeRunnerAdapter({
+      preflight: {
+        probe: async () => ({ found: true, version: "2.1.251", help: "Usage: claude [options]\n  --effort <level>\n    (low, medium, high, xhigh, max)" }),
+      },
+    });
+    expect(adapter.getThinkingLevels()).toEqual([]);
+    await adapter.inspectProject("/nonexistent");
+    expect(adapter.getThinkingLevels()).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(adapter.supportsThinking("anthropic/claude-opus-4")).toBe(true);
+    expect(adapter.resolveThinking("anthropic/claude-opus-4", "high")).toBe("high");
+    expect(adapter.resolveThinking("anthropic/claude-opus-4", "not-a-real-level")).toBeUndefined();
+    expect(adapter.getDefaultThinking("anthropic/claude-opus-4")).toBe("low");
+  });
+
+  test("buildLaunchPlan maps a canonical modelId to Claude's native alias, never passing the raw catalog ID through", async () => {
+    const adapter = new ClaudeRunnerAdapter({
+      preflight: {
+        probe: async () => ({ found: true, version: "2.1.251", help: "Usage: claude [options]\n  -p, --print\n  --model <model>" }),
+      },
+    });
+    const result = await adapter.buildLaunchPlan!({ projectRoot: "/p", teamId: "developer-team", mode: "interactive", modelId: "anthropic/claude-opus-4", deckConfig: undefined as never });
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") return;
+    const idx = result.plan.args.indexOf("--model");
+    expect(result.plan.args[idx + 1]).toBe("opus");
+  });
+
+  test("buildLaunchPlan omits an unmappable model with a warning diagnostic instead of passing it through raw", async () => {
+    const adapter = new ClaudeRunnerAdapter({
+      preflight: { probe: async () => ({ found: true, version: "2.1.251", help: "Usage: claude [options]\n  -p, --print" }) },
+    });
+    const result = await adapter.buildLaunchPlan!({ projectRoot: "/p", teamId: "developer-team", mode: "interactive", modelId: "some-unrelated-model", deckConfig: undefined as never });
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") return;
+    expect(result.plan.args).not.toContain("--model");
+    expect(result.diagnostics.some((d) => d.code === "claude-model-omitted")).toBe(true);
+  });
 });
 
 describe("ClaudeRunnerAdapter.writeMcpConfig", () => {
@@ -262,5 +316,79 @@ describe("ClaudeRunnerAdapter.writeMcpConfig", () => {
       expect(result.ok).toBe(true);
       expect(existsSync(join(dir, ".mcp.json"))).toBe(true);
     });
+  });
+});
+
+describe("ClaudeRunnerAdapter capability catalog — Task 4.2, honest gaps", () => {
+  test("getCapabilityIds lists every catalog entry, supported and gap alike", () => {
+    const adapter = new ClaudeRunnerAdapter();
+    const ids = adapter.getCapabilityIds();
+    expect(ids).toContain("native-agent-roles");
+    expect(ids).toContain("external-standalone-skills");
+    expect(ids.length).toBeGreaterThan(5);
+  });
+
+  test("getCapability returns a real entry for a known id and undefined for an unknown one", () => {
+    const adapter = new ClaudeRunnerAdapter();
+    const entry = adapter.getCapability("native-agent-roles") as { supportStatus?: string } | undefined;
+    expect(entry?.supportStatus).toBe("supported");
+    expect(adapter.getCapability("not-a-real-capability")).toBeUndefined();
+  });
+
+  test("every deferred capability reports status 'gap' with a diagnostic, never silently absent", () => {
+    const adapter = new ClaudeRunnerAdapter();
+    for (const id of ["external-standalone-skills", "bootstrap-skills", "trusted-runner-host-bridge"]) {
+      const entry = adapter.getCapability(id) as { supportStatus?: string; diagnostics?: readonly string[] } | undefined;
+      expect(entry?.supportStatus).toBe("gap");
+      expect(entry?.diagnostics?.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("getCapabilityInventory reflects real on-disk materialization state, not a hardcoded guess", async () => {
+    await withTempDir(async (dir) => {
+      const adapter = new ClaudeRunnerAdapter();
+      const before = await adapter.getCapabilityInventory({ projectRoot: dir, environmentId: "claude-development", runnerId: "claude", deckConfig: undefined as never });
+      expect(before.capabilities.find((c) => c.capabilityId === "native-agent-roles")?.isInstalled).toBe(false);
+
+      const plan = adapter.buildDeveloperTeamInstallPlan({ projectRoot: dir, environmentId: "claude-development", deckConfig: undefined as never });
+      await adapter.applyDeveloperTeamInstall({ projectRoot: dir, plan, environmentId: "claude-development" });
+
+      const after = await adapter.getCapabilityInventory({ projectRoot: dir, environmentId: "claude-development", runnerId: "claude", deckConfig: undefined as never });
+      expect(after.capabilities.find((c) => c.capabilityId === "native-agent-roles")?.isInstalled).toBe(true);
+    });
+  });
+});
+
+describe("ClaudeRunnerAdapter.diagnoseProject — Task 4.3, real deck doctor diagnostics", () => {
+  test("reports a binary-missing error and nothing else when the binary is absent", async () => {
+    const adapter = new ClaudeRunnerAdapter({ preflight: { probe: async () => ({ found: false }) } });
+    const checks = await adapter.diagnoseProject!("/nonexistent", undefined as never);
+    expect(checks.length).toBe(1);
+    expect(checks[0]!.category).toBe("binary");
+    expect(checks[0]!.status).toBe("error");
+  });
+
+  test("reports ok/warning checks reflecting real project state, not `unknown`", async () => {
+    await withTempDir(async (dir) => {
+      const adapter = new ClaudeRunnerAdapter();
+      const before = await adapter.diagnoseProject!(dir, undefined as never);
+      expect(before.some((c) => c.category === "binary" && c.status === "ok")).toBe(true);
+      expect(before.some((c) => c.category === "developer-team" && c.status === "warning")).toBe(true);
+
+      const plan = adapter.buildDeveloperTeamInstallPlan({ projectRoot: dir, environmentId: "claude-development", deckConfig: undefined as never });
+      await adapter.applyDeveloperTeamInstall({ projectRoot: dir, plan, environmentId: "claude-development" });
+
+      const after = await adapter.diagnoseProject!(dir, undefined as never);
+      expect(after.some((c) => c.category === "developer-team" && c.status === "ok")).toBe(true);
+      expect(after.some((c) => c.category === "claude-md" && c.status === "ok")).toBe(true);
+    });
+  });
+});
+
+describe("ClaudeRunnerAdapter.inspectEnvironment — now real, delegates to inspectProject", () => {
+  test("returns a RunnerProjectInspection, not an opaque unknown stub", async () => {
+    const adapter = new ClaudeRunnerAdapter({ preflight: { probe: async () => ({ found: false }) } });
+    const result = await adapter.inspectEnvironment() as { state?: string };
+    expect(result.state).toBe("blocked");
   });
 });

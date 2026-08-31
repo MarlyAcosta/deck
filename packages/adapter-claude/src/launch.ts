@@ -72,7 +72,7 @@ function safeClaudeScalar(value: string | undefined): string | undefined {
   return isSafeClaudeLaunchScalar(value) ? value : undefined;
 }
 
-function invalidLaunchScalar(field: "model"): RunnerLaunchResult {
+function invalidLaunchScalar(field: "model" | "reasoning"): RunnerLaunchResult {
   return {
     status: "blocked",
     code: "claude-invalid-launch-scalar",
@@ -105,6 +105,14 @@ export function buildClaudeLaunchPlan(
   input: RunnerLaunchInput,
   features: ClaudeLaunchFeatures,
   bootstrap?: ClaudeNewSessionBootstrap,
+  /**
+   * Confirmed live in Phase 4 against a real install: `--effort <level>` (choices `low`,
+   * `medium`, `high`, `xhigh`, `max`, parsed dynamically by compatibility.ts, never hardcoded
+   * here). An unrecognized value is validated and rejected by Deck itself rather than relying
+   * on the binary's own graceful-degrade-with-a-stderr-warning behavior (also confirmed live) —
+   * Deck fails closed on its own terms instead of depending on that fallback.
+   */
+  availableEffortLevels: readonly string[] = [],
 ): RunnerLaunchResult {
   const capability = input.mode === "resume-by-id" ? "resumeById" : input.mode === "resume-latest" ? "resumeLatest" : input.mode;
   if (!features[capability]) {
@@ -125,6 +133,10 @@ export function buildClaudeLaunchPlan(
 
   const newSession = input.mode === "interactive" || input.mode === "exec";
   if (newSession && input.modelId !== undefined && !safeClaudeScalar(input.modelId)) return invalidLaunchScalar("model");
+  if (newSession && input.reasoningLevel !== undefined
+    && (!safeClaudeScalar(input.reasoningLevel) || !availableEffortLevels.includes(input.reasoningLevel))) {
+    return invalidLaunchScalar("reasoning");
+  }
 
   const args: string[] = [CLAUDE_LAUNCH_POLICY_FLAG, CLAUDE_LAUNCH_POLICY_VALUE];
 
@@ -143,6 +155,8 @@ export function buildClaudeLaunchPlan(
   if (newSession) {
     const modelId = safeClaudeScalar(input.modelId);
     if (modelId) args.push("--model", modelId);
+    const reasoningLevel = safeClaudeScalar(input.reasoningLevel);
+    if (reasoningLevel && availableEffortLevels.includes(reasoningLevel)) args.push("--effort", reasoningLevel);
   }
 
   let stdinPayload: RunnerStdinPayload | undefined;

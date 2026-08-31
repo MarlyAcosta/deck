@@ -95,3 +95,15 @@ events:
       - "Phase 3 (Developer Team materialization) complete: 7 roles to .claude/agents/*.md + matching .claude/skills/*/SKILL.md (reusing the shared buildDeveloperTeamManifest core function directly), CLAUDE.md marker-span merge, .mcp.json single-server safe writer, instruction translation with an integration-tested validator, and backup/apply/rollback/verify (in-memory, deliberately smaller in scope than Codex's persistent journal)."
       - "Standalone/bootstrap skills explicitly deferred as new Task 3.6, not silently dropped."
       - "96/96 package tests pass; full suite (4715/24/3, 314 files) matches the known-good baseline exactly; tsc clean. This phase touched zero files outside packages/adapter-claude."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-08-29"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Phase 4 (models, capability catalog, doctor) complete. Found and fixed a real bug inherited from Phase 2/3: canonical model catalog IDs 404 against the real Claude Code binary; only sonnet/opus/haiku aliases work. Fixed with an explicit mapping table wired into both launch and materialized frontmatter."
+      - "Also found and wired --effort <level> (low/medium/high/xhigh/max), missed in Phase 0's condensed excerpt."
+      - "readModelAssignments/readThinkingAssignments, capability catalog with honest gaps (Task 4.2), and real deck doctor diagnostics (Task 4.3) all implemented."
+      - "117/117 package tests pass; full suite (4736/24/3, 315 files) matches the known-good baseline exactly; tsc clean. A live end-to-end run against the real claude binary confirmed the model-mapping fix and --effort together."

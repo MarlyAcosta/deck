@@ -9,4 +9,6 @@ export * from "./mcp-config";
 export * from "./instruction-translation";
 export * from "./developer-team-install";
 export * from "./transaction";
+export * from "./models";
+export * from "./capability-catalog";
 export * from "./runner-adapter";

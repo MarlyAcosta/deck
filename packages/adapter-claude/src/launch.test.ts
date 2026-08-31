@@ -78,6 +78,37 @@ describe("buildClaudeLaunchPlan — model scalar safety", () => {
   });
 });
 
+const effortLevels = ["low", "medium", "high", "xhigh", "max"];
+
+describe("buildClaudeLaunchPlan — --effort (Phase 4, confirmed live)", () => {
+  test("passes a recognized reasoningLevel through as --effort when it's in the advertised list", () => {
+    const result = buildClaudeLaunchPlan({ ...base, mode: "interactive", reasoningLevel: "high" }, allFeatures, undefined, effortLevels);
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") return;
+    const idx = result.plan.args.indexOf("--effort");
+    expect(result.plan.args[idx + 1]).toBe("high");
+  });
+
+  test("blocks a reasoningLevel that is not in the advertised list, rather than passing it through and relying on the binary's own fallback", () => {
+    const result = buildClaudeLaunchPlan({ ...base, mode: "interactive", reasoningLevel: "bogus-level" }, allFeatures, undefined, effortLevels);
+    expect(result.status).toBe("blocked");
+    if (result.status === "ready") throw new Error("expected a non-ready result");
+    expect(result.code).toBe("claude-invalid-launch-scalar");
+  });
+
+  test("omits --effort when no levels were advertised (unknown compatibility), never guessing", () => {
+    const result = buildClaudeLaunchPlan({ ...base, mode: "interactive", reasoningLevel: "high" }, allFeatures, undefined, []);
+    expect(result.status).toBe("blocked");
+  });
+
+  test("resume modes never receive a --effort override even if reasoningLevel is set", () => {
+    const result = buildClaudeLaunchPlan({ ...base, mode: "resume-latest", reasoningLevel: "high" }, allFeatures, undefined, effortLevels);
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") return;
+    expect(result.plan.args).not.toContain("--effort");
+  });
+});
+
 describe("buildClaudeLaunchPlan — exec prompt delivery", () => {
   const execInput = (overrides: Partial<Extract<RunnerLaunchInput, { mode: "exec" }>> = {}): RunnerLaunchInput => ({
     ...base,

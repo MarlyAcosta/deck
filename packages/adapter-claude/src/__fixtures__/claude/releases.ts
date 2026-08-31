@@ -9,6 +9,11 @@ import type { ClaudeReleaseFixture } from "../../types";
  * Full raw capture (274 lines) lives alongside this change's openspec artifacts at
  * openspec/changes/add-claude-code-runner-support/ for anyone who wants to diff future
  * captures against it.
+ *
+ * `--effort <level>` was added in Phase 4 — the original Phase 0 excerpt missed it (only a
+ * condensed subset of flags was kept). Re-confirmed live against the real binary, including
+ * that an invalid value degrades gracefully (a stderr warning + falls back to the default,
+ * `is_error: false`) rather than failing the launch — see design.md's model/thinking section.
  */
 const HELP_V2_1_251 = `Usage: claude [options] [command] [prompt]
 
@@ -31,6 +36,8 @@ Options:
   --dangerously-skip-permissions        Bypass all permission checks.
                                         Recommended only for sandboxes with no
                                         internet access.
+  --effort <level>                      Effort level for the current session
+                                        (low, medium, high, xhigh, max)
   --allow-dangerously-skip-permissions  Enable bypassing all permission checks
                                         as an option, without it being enabled
                                         by default. Recommended only for

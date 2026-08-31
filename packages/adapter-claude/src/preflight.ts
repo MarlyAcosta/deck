@@ -52,6 +52,7 @@ export async function inspectClaudeProject(
       resumeById: compat.launch.resumeById,
       resumeLatest: compat.launch.resumeLatest,
       launchPolicySupported: compat.launchPolicy.supported,
+      thinkingLevels: compat.effort.levels,
       executionClass: "static-compatible",
     },
     diagnostics: [],

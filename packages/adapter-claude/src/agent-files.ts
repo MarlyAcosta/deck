@@ -4,6 +4,7 @@ import {
   type CapabilityInstructionBundle,
 } from "@deck/core";
 import type { DeveloperTeamManifestAgent, DeveloperTeamManifestSkill } from "@deck/core/runner-capability";
+import { nativeClaudeModelAlias } from "./models";
 
 /**
  * Deck's ownership marker, placed as the first line of the BODY (after YAML frontmatter), never
@@ -38,14 +39,37 @@ export function buildAgentFileContent(
     teamId: "developer-team",
     agentId: agent.agentId,
   });
+  // REQ-CLD-MDL-002 / real bug caught in Phase 4: agent.model is a Deck canonical catalog ID
+  // (e.g. "anthropic/claude-opus-4"), which does not resolve as a Claude Code model value
+  // (confirmed live: 404). Mapped to Claude's own alias here; an unmapped model is omitted from
+  // frontmatter entirely rather than writing a value Claude Code would reject.
+  const nativeModel = nativeClaudeModelAlias(agent.model);
   const frontmatter = [
     "---",
     `name: ${yamlString(agent.agentId)}`,
     `description: ${yamlString(agent.displayName)}`,
-    ...(agent.model ? [`model: ${yamlString(agent.model)}`] : []),
+    ...(nativeModel ? [`model: ${yamlString(nativeModel)}`] : []),
+    // `effort` is not a Claude Code subagent frontmatter field the CLI reads on its own; Deck
+    // records it here as its own metadata line so readModelAssignments/readThinkingAssignments
+    // can round-trip a persisted per-role thinking-effort choice back out of the materialized
+    // file (there is nowhere else project-local to keep it).
+    ...(agent.reasoning ? [`# deck-effort: ${yamlString(agent.reasoning)}`] : []),
     "---",
   ].join("\n");
   return [frontmatter, "", CLAUDE_OWNED_MARKER, "", instruction.trimEnd(), ""].join("\n");
+}
+
+const MODEL_FRONTMATTER_RE = /^model:\s*"((?:[^"\\]|\\.)*)"\s*$/m;
+const EFFORT_FRONTMATTER_RE = /^# deck-effort:\s*"((?:[^"\\]|\\.)*)"\s*$/m;
+
+/** Reads back the `model`/`# deck-effort` lines a materialized `.claude/agents/<id>.md` file carries, if any. */
+export function parseAgentFrontmatterAssignments(content: string): { model?: string; effort?: string } {
+  const modelMatch = content.match(MODEL_FRONTMATTER_RE);
+  const effortMatch = content.match(EFFORT_FRONTMATTER_RE);
+  return {
+    ...(modelMatch ? { model: JSON.parse(`"${modelMatch[1]}"`) } : {}),
+    ...(effortMatch ? { effort: JSON.parse(`"${effortMatch[1]}"`) } : {}),
+  };
 }
 
 /**
