@@ -36,6 +36,8 @@ import {
   type RunnerDeveloperTeamInstallPlan,
   type RunnerLaunchInput,
   type RunnerLaunchResult,
+  type RunnerMcpConfigInput,
+  type RunnerMcpConfigResult,
   type RunnerProjectInspection,
   type RunnerRollbackResult,
   type RunnerVerifyResult,
@@ -47,6 +49,9 @@ import {
 import { CLAUDE_DEVELOPMENT_TEAMS } from "./team-catalog";
 import { inspectClaudeProject, type ClaudePreflightEffects, type ClaudeProbeResult } from "./preflight";
 import { buildClaudeLaunchPlan } from "./launch";
+import { buildClaudeDeveloperTeamInstallPlan } from "./developer-team-install";
+import { applyClaudeFiles, backupClaudeFiles, rollbackClaudeFiles, verifyClaudeFiles } from "./transaction";
+import { writeClaudeMcpConfig } from "./mcp-config";
 
 export type ClaudeRunnerAdapterOptions = {
   preflight?: ClaudePreflightEffects;
@@ -74,6 +79,14 @@ export class ClaudeRunnerAdapter implements RunnerAdapter {
   readonly environmentIds: readonly string[] = ["claude-development"];
 
   readonly #preflight: ClaudePreflightEffects;
+  /**
+   * `backupDeveloperTeamFiles(plan)` and `verifyDeveloperTeamInstall(plan)` receive only the
+   * plan object (no projectRoot) — mirrors Codex's `#nativePlans`/`#planOperations` WeakMaps
+   * for the same reason: `applyDeveloperTeamInstall` gets `projectRoot` directly via its input,
+   * but these two do not, so the exact plan object this adapter produced is the only link back
+   * to where it was planned for.
+   */
+  readonly #planProjectRoots = new WeakMap<object, string>();
 
   constructor(options: ClaudeRunnerAdapterOptions = {}) {
     this.#preflight = options.preflight ?? { probe: defaultProbe };
@@ -161,17 +174,56 @@ export class ClaudeRunnerAdapter implements RunnerAdapter {
   buildReviewPlan(_state: DashboardState, _inventory: CapabilityInventory): ReviewPlan { return notYetImplemented("buildReviewPlan", "Phase 3/4"); }
   buildInstallationPlan(_state: DashboardState): InstallationPlan { return notYetImplemented("buildInstallationPlan", "Phase 3/4"); }
   async runAction(_action: RunnerAction, _context: RunnerActionContext): Promise<RunnerActionRunResult> { return notYetImplemented("runAction", "Phase 3/4"); }
-  buildDeveloperTeamInstallPlan(_input: DeveloperTeamAdapterInstallInput): RunnerDeveloperTeamInstallPlan { return notYetImplemented("buildDeveloperTeamInstallPlan", "Phase 3"); }
-  async applyDeveloperTeamInstall(_input: DeveloperTeamApplyInput): Promise<DeveloperTeamApplyResult> { return notYetImplemented("applyDeveloperTeamInstall", "Phase 3"); }
   getNextScreen(_state: FlowState): NextScreen { return notYetImplemented("getNextScreen", "Phase 4"); }
   async inspectEnvironment(): Promise<unknown> { return notYetImplemented("inspectEnvironment", "Phase 4"); }
   async reviewTools(): Promise<unknown> { return notYetImplemented("reviewTools", "Phase 4"); }
-  backupDeveloperTeamFiles(_plan: unknown): RunnerBackupResult { return notYetImplemented("backupDeveloperTeamFiles", "Phase 3"); }
-  async rollbackDeveloperTeamFiles(_backup: unknown): Promise<RunnerRollbackResult> { return notYetImplemented("rollbackDeveloperTeamFiles", "Phase 3"); }
-  verifyDeveloperTeamInstall(_plan: unknown): RunnerVerifyResult { return notYetImplemented("verifyDeveloperTeamInstall", "Phase 3"); }
   getCapability(_capabilityId: string): unknown { return notYetImplemented("getCapability", "Phase 4"); }
   getCapabilityIds(): readonly string[] { return notYetImplemented("getCapabilityIds", "Phase 4"); }
   getSelectableTools(): unknown[] { return notYetImplemented("getSelectableTools", "Phase 4"); }
+
+  // -------------------------------------------------------------------------
+  // Developer Team materialization — Phase 3
+  // -------------------------------------------------------------------------
+
+  buildDeveloperTeamInstallPlan(input: DeveloperTeamAdapterInstallInput): RunnerDeveloperTeamInstallPlan {
+    const plan = buildClaudeDeveloperTeamInstallPlan(input);
+    this.#planProjectRoots.set(plan, input.projectRoot);
+    return plan;
+  }
+
+  async applyDeveloperTeamInstall(input: DeveloperTeamApplyInput): Promise<DeveloperTeamApplyResult> {
+    return applyClaudeFiles(input.projectRoot, input.plan.files);
+  }
+
+  backupDeveloperTeamFiles(plan: unknown): RunnerBackupResult {
+    const projectRoot = plan && typeof plan === "object" ? this.#planProjectRoots.get(plan) : undefined;
+    const files = (plan as RunnerDeveloperTeamInstallPlan | undefined)?.files;
+    if (!projectRoot || !files) {
+      return { payload: undefined, diagnostics: ["Unknown Claude installation plan; it was not produced by this adapter instance."] };
+    }
+    return { payload: backupClaudeFiles(projectRoot, files), diagnostics: [] };
+  }
+
+  async rollbackDeveloperTeamFiles(backup: unknown): Promise<RunnerRollbackResult> {
+    return rollbackClaudeFiles(backup);
+  }
+
+  verifyDeveloperTeamInstall(plan: unknown): RunnerVerifyResult {
+    const projectRoot = plan && typeof plan === "object" ? this.#planProjectRoots.get(plan) : undefined;
+    const files = (plan as RunnerDeveloperTeamInstallPlan | undefined)?.files;
+    if (!projectRoot || !files) {
+      return { valid: false, diagnostics: ["Unknown Claude installation plan; it was not produced by this adapter instance."] };
+    }
+    return verifyClaudeFiles(projectRoot, files);
+  }
+
+  // -------------------------------------------------------------------------
+  // MCP — Phase 3 (single-server safe writer; capability-driven selection is Phase 4)
+  // -------------------------------------------------------------------------
+
+  async writeMcpConfig(input: RunnerMcpConfigInput): Promise<RunnerMcpConfigResult> {
+    return writeClaudeMcpConfig(input);
+  }
 }
 
 export function createClaudeRunnerAdapter(options: ClaudeRunnerAdapterOptions = {}): RunnerAdapter {

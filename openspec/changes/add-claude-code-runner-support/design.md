@@ -206,6 +206,50 @@ outside it) rather than a blind overwrite — same principle as Codex's `AGENTS.
 simpler than Codex's TOML range-ownership because markdown has no schema to preserve beyond the
 marker boundaries themselves.
 
+## Developer Team materialization (CONFIRMED in Phase 3)
+
+**Manifest reuse, not reinvention.** `packages/core/src/teams/developer/manifest.ts`'s
+`buildDeveloperTeamManifest({team, modelAssignments, capabilityInstructions})` already assembles
+each role's full instruction text and each agent-bound skill's body — this is the same
+"canonical intermediate representation" Codex's `roleContent()`/`addSkill()` consume, confirmed
+by reading how Codex's `developer-team-install.ts` calls it. `@deck/adapter-claude`'s
+`buildClaudeDeveloperTeamInstallPlan()` calls it directly; no role-prompt content was
+reimplemented — only Claude-native file-path and frontmatter serialization was written.
+
+**Ownership-marker placement is runner-format-sensitive.** Codex's TOML role files can carry a
+leading `# marker` comment line before any real content, since TOML has no "must start with X"
+requirement. Claude Code's `.claude/agents/*.md` and `.claude/skills/*/SKILL.md` files require
+YAML frontmatter (`---`) to be the file's *literal first line* for Claude Code's own parser to
+recognize them — a marker line before it would silently break every generated file. Deck's
+ownership marker (`<!-- deck-claude-v1 -->`) is therefore placed as the first line of the body,
+after the closing `---`, not before the frontmatter.
+
+**Backup/verify need a plan→projectRoot link the interface doesn't provide directly.**
+`RunnerAdapter.backupDeveloperTeamFiles(plan: unknown)` and
+`.verifyDeveloperTeamInstall(plan: unknown)` receive only the plan object — confirmed by reading
+the actual interface signatures in `packages/core/src/runner-adapter.ts`, not assumed.
+`applyDeveloperTeamInstall(input: DeveloperTeamApplyInput)` doesn't have this problem since
+`DeveloperTeamApplyInput.projectRoot` is passed directly. Mirrors Codex's own
+`#nativePlans`/`#planOperations` `WeakMap`s keyed by the exact plan object: `ClaudeRunnerAdapter`
+holds a `WeakMap<object, string>` from plan to `projectRoot`, populated when
+`buildDeveloperTeamInstallPlan` runs. This also means only the exact plan object this adapter
+produced can be backed up or verified — a caller cannot reconstruct or tamper with one.
+
+**Transaction system is intentionally smaller than Codex's, not a hidden gap.** Codex's
+`transaction.ts` maintains a persistent, crash-recoverable journal on disk surviving process
+restarts. `@deck/adapter-claude`'s `transaction.ts` holds an in-memory snapshot-then-restore
+backup for the duration of one install operation, with atomic per-file writes
+(temp-then-rename). This is a real, tested safety mechanism — not a stub — but it does not claim
+Codex-level recoverability across a crashed process; that gap is recorded here rather than
+silently matching Codex's stronger claim without the mechanism to back it up.
+
+**Standalone/bootstrap skills are explicitly deferred (Task 3.6), not silently dropped.** Only
+the 7 canonical roles and their matching agent-bound skills are materialized in this pass. The
+29 bundled external skills and the `deck-onboard`/`deck-archive` bootstrap skills — which
+Codex's Tasks 2.4/2.5 do materialize — are left for a follow-up change, since nothing in Deck's
+TUI can select them for Claude yet anyway (that selection surface is Phase 4's capability
+catalog).
+
 ## Deferred: trusted execution boundary
 
 Codex's design required identifying a trusted runner-host bridge (dossier continuity, one-use

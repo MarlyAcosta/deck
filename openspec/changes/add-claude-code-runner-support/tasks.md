@@ -170,43 +170,115 @@ a mode the live-probed help text doesn't advertise.
 when a bootstrap is supplied, and that an invalid/oversized bootstrap blocks the launch rather
 than silently truncating or omitting it.
 
-## Phase 3: Developer Team materialization
+## Phase 3: Developer Team materialization — COMPLETE
 
-### Task 3.1: `.mcp.json` safe writer
+**Scope note, recorded here rather than left implicit:** unlike Codex's/OpenCode's equivalent
+phase, this pass does not materialize the 29 bundled external standalone skills or the
+`deck-onboard`/`deck-archive` bootstrap skills. Only the 7 canonical roles (`.claude/agents/*.md`
++ matching `.claude/skills/*/SKILL.md`) and `CLAUDE.md` are covered. `input.standaloneSkills` is
+accepted by the type but intentionally unused. This is an explicit deferral (tracked as new
+Task 3.6 below), not a silent gap — nothing in Deck's TUI can select standalone skills for
+Claude yet anyway, since `getCapabilityInventory`/`getCapabilityIds` remain Phase 4 stubs.
 
-- Implement `writeMcpConfig` using the OpenCode-style safe JSON merge (REQ-CLD-MAT-001).
+### Task 3.1: `.mcp.json` safe writer — DONE
 
-**Verification:** A test with a pre-existing unrelated MCP entry proves it survives a Deck
-write untouched.
+- `src/mcp-config.ts`: `writeClaudeMcpConfig()` — read/merge/atomic-write/validate, single
+  server entry, mirroring OpenCode's `config-merge.ts` algorithm (REQ-CLD-MAT-001). Maps
+  `type: "local"` + `command` to a `stdio` entry, `type: "remote"`/`url` to an `http` entry.
+  Wired into `ClaudeRunnerAdapter.writeMcpConfig`.
 
-### Task 3.2: `CLAUDE.md` marker-span merge
+**Verification:** 7 tests in `mcp-config.test.ts`, all passing on a real temp-directory
+filesystem (not mocked fs): a pre-existing unrelated server entry and an unrelated top-level key
+both survive a write untouched; invalid existing JSON is refused rather than blindly
+overwritten; a path-traversal-shaped server name is rejected.
 
-- Implement the owned marker-span merge (REQ-CLD-MAT-002).
+### Task 3.2: `CLAUDE.md` marker-span merge — DONE
 
-**Verification:** A test with pre-existing unowned `CLAUDE.md` content proves only the marker
-span changes, byte-for-byte elsewhere.
+- `src/claude-md.ts`: `mergeClaudeMd()` — same marker text
+  (`<!-- deck:developer-team:start/end -->`) and same single-owned-span invariant as Codex's
+  `AGENTS.md` handling (REQ-CLD-MAT-002).
 
-### Task 3.3: `.claude/agents/*.md` role materialization
+**Verification:** 6 tests in `claude-md.test.ts`: pre-existing unowned content survives both
+before and after the marker span; a second merge is byte-identical to the first (idempotent);
+duplicate or unterminated markers block instead of guessing.
 
-- Implement per-role subagent file generation with collision detection (REQ-CLD-MAT-003).
+### Task 3.3: `.claude/agents/*.md` role materialization — DONE
 
-**Verification:** Fresh install, unchanged-reapply (idempotent), and unowned-collision-blocks
-tests all pass.
+- `src/agent-files.ts` + `src/developer-team-install.ts`: `buildClaudeDeveloperTeamInstallPlan()`
+  calls the shared `buildDeveloperTeamManifest()` (the same canonical content-assembly core
+  function Codex/OpenCode use — no role content was reinvented) and materializes each of the 7
+  `DEVELOPER_TEAM_AGENTS` as `.claude/agents/<id>.md` (YAML frontmatter + composed instruction)
+  plus a matching `.claude/skills/<id>/SKILL.md` (validated against the shared
+  `parseSkillDescriptor` contract). Collision detection (REQ-CLD-MAT-003) via an ownership
+  marker placed as the first line of the *body*, never before the frontmatter — Claude Code's
+  frontmatter parser requires `---` to be the file's literal first line, unlike Codex's TOML
+  role files which can carry a leading marker comment safely; this was designed correctly up
+  front, not discovered as a bug.
 
-### Task 3.4: Instruction translation
+**Verification:** `agent-files.test.ts` (9 tests) + `developer-team-install.test.ts` (9 tests),
+all passing on a real filesystem: fresh install produces exactly 7 agent files + 7 skill files +
+CLAUDE.md (15 total); every produced file is recognized as Deck-owned; planning again after
+applying is byte-identical (idempotent); a pre-existing unowned agent file blocks the whole
+plan with a specific diagnostic rather than being silently overwritten; CLAUDE.md's pre-existing
+human content is preserved (marker-span merge, not whole-file ownership, is the correct model
+there).
 
-- Implement `translateClaudeCapabilityInstructions()` (expected near-identity) and
-  `validateClaudeInstructionTranslation()` per REQ-CLD-TRN-001/002.
+### Task 3.4: Instruction translation — DONE
 
-**Verification:** The validator rejects a deliberately injected foreign-runner term in a test
-fixture; it passes on the real shared instruction bundles unmodified.
+- `src/instruction-translation.ts`: `translateClaudeCapabilityInstructions()` is a literal
+  identity function (confirmed correct, not assumed — the shared bundles are already
+  Claude-native) and `validateClaudeInstructionTranslation()` guards against foreign-runner
+  vocabulary per REQ-CLD-TRN-001/002. Wired into `buildClaudeDeveloperTeamInstallPlan` so it
+  actually runs on every materialized file, not just in isolated unit tests.
 
-### Task 3.5: Backup, verify, rollback
+**Verification:** `instruction-translation.test.ts` (5 tests) covers identity pass-through and
+rejection of injected `OpenCode`/`Codex`/`adapter-codex`/`--opencode` terms, including
+line-number-accurate multi-violation reporting. A dedicated integration test in
+`developer-team-install.test.ts` proves the validator is actually invoked during real plan
+building (a capability-instruction fragment containing "OpenCode-specific" blocks the whole
+plan), not just exercised in unit isolation.
 
-- Implement `backupDeveloperTeamFiles`, `verifyDeveloperTeamInstall`,
-  `rollbackDeveloperTeamFiles` per REQ-CLD-MAT-004.
+### Task 3.5: Backup, verify, rollback — DONE, intentionally smaller in scope than Codex's
 
-**Verification:** An interrupted-apply-then-rollback test restores prior state exactly.
+- `src/transaction.ts`: `backupClaudeFiles`/`applyClaudeFiles`/`rollbackClaudeFiles`/
+  `verifyClaudeFiles` (REQ-CLD-MAT-004) — snapshot-then-restore backup, atomic per-file writes
+  (temp-then-rename), content-hash-free direct comparison for verify. Deliberately not
+  Codex-level (no persistent, crash-recoverable journal) — recorded as a real scope decision in
+  `design.md`, not a hidden gap.
+- Wired into `ClaudeRunnerAdapter` via a `WeakMap<plan, projectRoot>`, needed because
+  `backupDeveloperTeamFiles(plan)`/`verifyDeveloperTeamInstall(plan)` receive only the plan
+  object (confirmed by reading the actual interface signatures and Codex's own
+  `#nativePlans`/`#planOperations` WeakMaps, not assumed) — `applyDeveloperTeamInstall` needs no
+  such trick since `DeveloperTeamApplyInput.projectRoot` is passed directly.
+
+**Verification:** `transaction.test.ts` (10 tests) on a real filesystem: create vs. update vs.
+unchanged-skip classification; full backup→apply→rollback round trip restores exact prior
+*absence*; a separate round trip restores exact prior *content* (not just deletes); an
+invalid/missing backup payload reports `nothing-to-do` rather than crashing; verify catches both
+missing files and content drift. A further integration test in `runner-adapter.test.ts` runs
+the entire build→backup→apply→verify→rollback sequence through the public `ClaudeRunnerAdapter`
+surface (not the internal pure functions directly), and a separate test confirms
+`backupDeveloperTeamFiles`/`verifyDeveloperTeamInstall` degrade to a diagnostic — not a throw —
+for a plan object this adapter instance never produced.
+
+**Cross-cutting verification for all of Phase 3:** `bun test packages/adapter-claude`: 96 pass,
+0 fail (up from 55 after Phase 2). Full `bun test`: 4715 pass / 24 fail / 3 errors across 314
+files — the failing-test-name set matches the same known pre-existing baseline established in
+Phases 1–2 exactly (no new regressions; this phase touched zero files outside
+`packages/adapter-claude`, so the blast radius was inherently smaller than Phase 2's shared-code
+change). `bunx tsc --noEmit`: 0 errors from any touched file — one real bug caught and fixed
+along the way: a JSDoc comment containing the literal text `` `.claude/skills/*/SKILL.md` ``
+contained an accidental `*/` that closed the block comment early, corrupting everything parsed
+afterward; fixed by rewording to `<skillId>` instead of a glob-style asterisk.
+
+### Task 3.6: Standalone and bootstrap skill materialization — deferred, not started
+
+- Explicitly out of this pass's scope (see the note at the top of this phase). Materialize the
+  29 bundled external skills (`getStandaloneSkills()`/`getStandaloneSkill()`) and the
+  `deck-onboard`/`deck-archive` bootstrap skills (`getBootstrapSkillFiles()`) to
+  `.claude/skills/<id>/SKILL.md`, mirroring Codex's Tasks 2.4/2.5 exactly — the shared core
+  catalog functions already exist and were confirmed usable during Phase 3 exploration; only the
+  Claude-specific file-path wiring is missing.
 
 ## Phase 4: Models, capability catalog, doctor
 

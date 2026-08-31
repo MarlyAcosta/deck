@@ -1,6 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createAdapterRegistry } from "@deck/core";
+import type { DeveloperTeamAdapterInstallInput } from "@deck/core";
 import { createClaudeRunnerAdapter, ClaudeRunnerAdapter } from "./runner-adapter";
+
+async function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "deck-claude-adapter-e2e-"));
+  try {
+    await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
 
 describe("ClaudeRunnerAdapter identity and registration", () => {
   test("registers as 'claude' and resolves by the 'claude-development' environment", () => {
@@ -165,10 +179,7 @@ describe("ClaudeRunnerAdapter Phase 3/4 surfaces throw with a clear phase pointe
   test.each([
     ["buildReviewPlan", () => new ClaudeRunnerAdapter().buildReviewPlan(undefined as never, undefined as never)],
     ["buildInstallationPlan", () => new ClaudeRunnerAdapter().buildInstallationPlan(undefined as never)],
-    ["buildDeveloperTeamInstallPlan", () => new ClaudeRunnerAdapter().buildDeveloperTeamInstallPlan(undefined as never)],
     ["getNextScreen", () => new ClaudeRunnerAdapter().getNextScreen(undefined as never)],
-    ["backupDeveloperTeamFiles", () => new ClaudeRunnerAdapter().backupDeveloperTeamFiles(undefined)],
-    ["verifyDeveloperTeamInstall", () => new ClaudeRunnerAdapter().verifyDeveloperTeamInstall(undefined)],
     ["getCapability", () => new ClaudeRunnerAdapter().getCapability("anything")],
     ["getCapabilityIds", () => new ClaudeRunnerAdapter().getCapabilityIds()],
     ["getSelectableTools", () => new ClaudeRunnerAdapter().getSelectableTools()],
@@ -179,11 +190,77 @@ describe("ClaudeRunnerAdapter Phase 3/4 surfaces throw with a clear phase pointe
   test.each([
     ["getCapabilityInventory", () => new ClaudeRunnerAdapter().getCapabilityInventory(undefined as never)],
     ["runAction", () => new ClaudeRunnerAdapter().runAction(undefined as never, undefined as never)],
-    ["applyDeveloperTeamInstall", () => new ClaudeRunnerAdapter().applyDeveloperTeamInstall(undefined as never)],
     ["inspectEnvironment", () => new ClaudeRunnerAdapter().inspectEnvironment()],
     ["reviewTools", () => new ClaudeRunnerAdapter().reviewTools()],
-    ["rollbackDeveloperTeamFiles", () => new ClaudeRunnerAdapter().rollbackDeveloperTeamFiles(undefined)],
   ])("%s (async) rejects referencing tasks.md", async (name, call) => {
     await expect(call()).rejects.toThrow(/not implemented yet.*add-claude-code-runner-support\/tasks\.md/s);
+  });
+});
+
+describe("ClaudeRunnerAdapter.backupDeveloperTeamFiles / verifyDeveloperTeamInstall — unknown plan handling", () => {
+  test("backupDeveloperTeamFiles reports a diagnostic (not a throw) for a plan this adapter did not produce", () => {
+    const adapter = new ClaudeRunnerAdapter();
+    const result = adapter.backupDeveloperTeamFiles({ files: [] });
+    expect(result.payload).toBeUndefined();
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+  });
+
+  test("verifyDeveloperTeamInstall reports invalid (not a throw) for a plan this adapter did not produce", () => {
+    const adapter = new ClaudeRunnerAdapter();
+    const result = adapter.verifyDeveloperTeamInstall({ files: [] });
+    expect(result.valid).toBe(false);
+  });
+});
+
+describe("ClaudeRunnerAdapter Developer Team materialization — Phase 3, real filesystem round trip", () => {
+  function baseInput(projectRoot: string): DeveloperTeamAdapterInstallInput {
+    return { projectRoot, environmentId: "claude-development", deckConfig: undefined as never };
+  }
+
+  test("build -> apply -> verify -> backup -> rollback, all through the public adapter surface", async () => {
+    await withTempDir(async (dir) => {
+      const adapter = new ClaudeRunnerAdapter();
+
+      const plan = adapter.buildDeveloperTeamInstallPlan(baseInput(dir));
+      expect(plan.blocked).toBeFalsy();
+
+      const backup = adapter.backupDeveloperTeamFiles(plan);
+      expect(backup.payload).toBeDefined();
+
+      const applyResult = await adapter.applyDeveloperTeamInstall({ projectRoot: dir, plan, environmentId: "claude-development" });
+      expect(applyResult.changedCount).toBe(plan.files.length);
+      expect(existsSync(join(dir, ".claude", "agents", "deck-lead.md"))).toBe(true);
+      expect(await readFile(join(dir, "CLAUDE.md"), "utf-8")).toContain("Deck Developer Team");
+
+      const verify = adapter.verifyDeveloperTeamInstall(plan);
+      expect(verify.valid).toBe(true);
+
+      const rollback = await adapter.rollbackDeveloperTeamFiles(backup);
+      expect(rollback.status).toBe("rolled-back");
+      expect(existsSync(join(dir, ".claude", "agents", "deck-lead.md"))).toBe(false);
+    });
+  });
+
+  test("reapplying an already-installed plan reports everything unchanged (idempotent)", async () => {
+    await withTempDir(async (dir) => {
+      const adapter = new ClaudeRunnerAdapter();
+      const plan = adapter.buildDeveloperTeamInstallPlan(baseInput(dir));
+      await adapter.applyDeveloperTeamInstall({ projectRoot: dir, plan, environmentId: "claude-development" });
+      const secondPlan = adapter.buildDeveloperTeamInstallPlan(baseInput(dir));
+      const secondApply = await adapter.applyDeveloperTeamInstall({ projectRoot: dir, plan: secondPlan, environmentId: "claude-development" });
+      expect(secondApply.changedCount).toBe(0);
+      expect(secondApply.unchangedCount).toBe(secondPlan.files.length);
+    });
+  });
+});
+
+describe("ClaudeRunnerAdapter.writeMcpConfig", () => {
+  test("writes a real .mcp.json entry through the public adapter surface", async () => {
+    await withTempDir(async (dir) => {
+      const adapter = new ClaudeRunnerAdapter();
+      const result = await adapter.writeMcpConfig!({ serverName: "context7", projectRoot: dir, type: "local", command: ["npx", "-y", "context7-mcp"] });
+      expect(result.ok).toBe(true);
+      expect(existsSync(join(dir, ".mcp.json"))).toBe(true);
+    });
   });
 });
