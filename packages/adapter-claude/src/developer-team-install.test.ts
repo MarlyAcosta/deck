@@ -61,6 +61,45 @@ describe("buildClaudeDeveloperTeamInstallPlan — idempotent reapply", () => {
   });
 });
 
+describe("buildClaudeDeveloperTeamInstallPlan — mutationPreview (real bug found live: apps/cli's runner-launch-command blocks apply entirely when this field is undefined)", () => {
+  test("a fresh install previews one 'create' entry per file, each with preimage 'absent'", async () => {
+    await withTempDir(async (dir) => {
+      const plan = buildClaudeDeveloperTeamInstallPlan(baseInput(dir));
+      expect(plan.mutationPreview).toBeDefined();
+      expect(plan.mutationPreview!.length).toBe(plan.files.length);
+      for (const mutation of plan.mutationPreview!) {
+        expect(mutation.action).toBe("create");
+        expect(mutation.preimage).toBe("absent");
+        expect(mutation.postimage).not.toBe("absent");
+      }
+    });
+  });
+
+  test("an idempotent reapply previews zero mutations, not a false diff", async () => {
+    await withTempDir(async (dir) => {
+      const first = buildClaudeDeveloperTeamInstallPlan(baseInput(dir));
+      applyClaudeFiles(dir, first.files);
+      const second = buildClaudeDeveloperTeamInstallPlan(baseInput(dir));
+      expect(second.mutationPreview).toEqual([]);
+      // files[] still represents the full desired state even though nothing changed —
+      // apply's own idempotency check (transaction.ts) is what skips the actual write.
+      expect(second.files.length).toBe(first.files.length);
+    });
+  });
+
+  test("changing one role's model previews exactly one 'update' entry, not a rebuild of everything", async () => {
+    await withTempDir(async (dir) => {
+      const first = buildClaudeDeveloperTeamInstallPlan(baseInput(dir));
+      applyClaudeFiles(dir, first.files);
+      const second = buildClaudeDeveloperTeamInstallPlan({ ...baseInput(dir), modelAssignments: { "deck-lead": "anthropic/claude-opus-4" } });
+      expect(second.mutationPreview!.length).toBe(1);
+      expect(second.mutationPreview![0]!.action).toBe("update");
+      expect(second.mutationPreview![0]!.path).toBe(".claude/agents/deck-lead.md");
+      expect(second.mutationPreview![0]!.preimage).not.toBe("absent");
+    });
+  });
+});
+
 describe("buildClaudeDeveloperTeamInstallPlan — collision safety", () => {
   test("blocks instead of overwriting a pre-existing unowned agent file", async () => {
     await withTempDir(async (dir) => {

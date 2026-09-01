@@ -78,7 +78,7 @@ export type ParsedArgs =
     }
   | {
       command: "runner-launch";
-      runnerId: "codex" | "opencode";
+      runnerId: "codex" | "opencode" | "claude";
       teamId: "developer-team";
       launch:
         | { mode: "interactive" }
@@ -116,12 +116,12 @@ function parseBooleanFlag(value: string | undefined): boolean | undefined {
   return true;
 }
 
-/** Canonical, bounded serialization for `deck codex developer exec -- <prompt...>`. */
+/** Canonical, bounded serialization for `exec -- <prompt...>` — shared by Codex's and Claude's developer commands (nothing inside it is runner-specific). */
 export function serializeCodexExecPrompt(tokens: readonly string[]): { ok: true; payload: RunnerStdinPayload } | { ok: false; message: string } {
   const content = tokens.join(" ");
-  if (content.includes("\0")) return { ok: false, message: "Codex exec prompts cannot contain NUL bytes." };
+  if (content.includes("\0")) return { ok: false, message: "Exec prompts cannot contain NUL bytes." };
   if (Buffer.byteLength(content, "utf8") > MAX_RUNNER_STDIN_PAYLOAD_BYTES) {
-    return { ok: false, message: "Codex exec prompt exceeds the supported stdin payload limit." };
+    return { ok: false, message: "Exec prompt exceeds the supported stdin payload limit." };
   }
   return { ok: true, payload: { type: "utf8", content } };
 }
@@ -189,6 +189,64 @@ function parseCodexArgs(rest: string[]): ParsedArgs {
     ...(localOnly ? { localOnly: true } : {}),
     ...(yes ? { yes: true } : {}),
     ...(memoryProvider ? { memoryProvider } : {}),
+  };
+}
+
+/**
+ * Parse `deck claude developer ...` — mirrors `parseCodexArgs`'s exec/resume handling (Claude
+ * supports the same three launch modes) without Codex's TOML-safety-specific flags
+ * (`--local-only`, `--memory=`), which this adapter does not implement.
+ */
+function parseClaudeArgs(rest: string[]): ParsedArgs {
+  if (rest[0] !== "developer") {
+    return { command: "error", message: "Usage: deck claude developer [--install-only] [--dry-run] [--yes] [exec -- <prompt...> | resume <session-id> | resume --last]" };
+  }
+
+  const tokens = rest.slice(1);
+  const separatorIndex = tokens.indexOf("--");
+  const deckFlagRegion = separatorIndex >= 0 ? tokens.slice(0, separatorIndex) : tokens;
+  const dryRun = deckFlagRegion.includes("--dry-run");
+  const yes = deckFlagRegion.includes("--yes");
+  const installOnly = deckFlagRegion.includes("--install-only");
+  const deckFlags = new Set(["--dry-run", "--yes", "--install-only"]);
+  const filtered = [
+    ...deckFlagRegion.filter((token) => !deckFlags.has(token)),
+    ...(separatorIndex >= 0 ? ["--", ...tokens.slice(separatorIndex + 1)] : []),
+  ];
+
+  let launch: Extract<ParsedArgs, { command: "runner-launch" }>["launch"] = { mode: "interactive" };
+  if (filtered[0] === "exec") {
+    if (filtered[1] !== "--" || filtered.length < 3) {
+      return { command: "error", message: "Usage: deck claude developer exec -- <prompt...>" };
+    }
+    // serializeCodexExecPrompt is a generic bounded-UTF8-stdin serializer despite the name —
+    // nothing inside it is Codex-specific. Reused rather than duplicated.
+    const serialized = serializeCodexExecPrompt(filtered.slice(2));
+    if (!serialized.ok) return { command: "error", message: serialized.message };
+    launch = { mode: "exec", prompt: filtered.slice(2), stdin: "closed", stdinPayload: serialized.payload };
+  } else if (filtered[0] === "resume") {
+    if (filtered.length !== 2) {
+      return { command: "error", message: "Usage: deck claude developer resume <session-id> | resume --last" };
+    }
+    launch = filtered[1] === "--last"
+      ? { mode: "resume-latest" }
+      : { mode: "resume-by-id", sessionId: filtered[1]! };
+  } else if (filtered.length > 0) {
+    return { command: "error", message: `Unknown Claude developer argument: ${filtered[0]}` };
+  }
+
+  if (installOnly && launch.mode !== "interactive") {
+    return { command: "error", message: "--install-only cannot be combined with exec or resume." };
+  }
+
+  return {
+    command: "runner-launch",
+    runnerId: "claude",
+    teamId: "developer-team",
+    launch,
+    ...(installOnly ? { installOnly: true } : {}),
+    ...(dryRun ? { dryRun: true } : {}),
+    ...(yes ? { yes: true } : {}),
   };
 }
 
@@ -402,6 +460,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   if (first === "codex") {
     return parseCodexArgs(rest);
+  }
+
+  if (first === "claude") {
+    return parseClaudeArgs(rest);
   }
 
   if (first === "opencode") {

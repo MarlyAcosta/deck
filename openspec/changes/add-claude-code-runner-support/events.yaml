@@ -107,3 +107,16 @@ events:
       - "Also found and wired --effort <level> (low/medium/high/xhigh/max), missed in Phase 0's condensed excerpt."
       - "readModelAssignments/readThinkingAssignments, capability catalog with honest gaps (Task 4.2), and real deck doctor diagnostics (Task 4.3) all implemented."
       - "117/117 package tests pass; full suite (4736/24/3, 315 files) matches the known-good baseline exactly; tsc clean. A live end-to-end run against the real claude binary confirmed the model-mapping fix and --effort together."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-08-29"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Phase 5 (CLI command surface) complete -- added outside the original plan after testing surfaced no deck claude developer command existed at all. parseClaudeArgs added to cli-args.ts; main.tsx's dispatch needed zero changes (already generic)."
+      - "Found and fixed a real bug that would have blocked every apply forever: buildClaudeDeveloperTeamInstallPlan never populated the optional mutationPreview field, which apps/cli's runner-launch-command.ts requires to allow apply at all. Fixed with real SHA256-hash mutation entries mirroring Codex's construction."
+      - "Recorded a testing-process near-miss: bun run --cwd apps/cli caused resolveProjectRoot() to resolve to the real repo checkout itself, briefly writing untracked files into it -- caught via git status same-turn, removed safely."
+      - "Verified end-to-end through the real deck binary against the real authenticated claude process: dry-run, install-only apply, and exec -- \"prompt\" all confirmed working (is_error: false)."
+      - "cli-args.test.ts 59/59 pass; adapter-claude 120/120 pass; full suite (4742/24/3, 315 files) diff against a stash-based baseline is byte-for-byte identical; tsc clean."

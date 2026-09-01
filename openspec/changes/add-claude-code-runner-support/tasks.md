@@ -365,9 +365,81 @@ interface, type-checking fine through the interface but not when called on the c
 directly) were caught and fixed in `getThinkingLevels`/`supportsThinking`/`getDefaultThinking`.
 This phase touched zero files outside `packages/adapter-claude`.
 
-## Phase 5: Documentation and hardening
+## Phase 5: CLI command surface — COMPLETE (not in the original Phase 0–4 plan; added when live
+testing surfaced that nothing could actually reach the adapter from a terminal)
 
-### Task 5.1: Update support documentation
+**Why this phase exists:** after Phase 4, the adapter was fully real and tested (unit tests,
+live `claude` calls), but genuinely unreachable by an end user — `apps/cli/src/cli-args.ts` only
+parsed `deck codex developer`/`deck opencode developer`; there was no `deck claude developer` at
+all, and `menu-options.ts`'s "Claude Development Environment" entry was (and remains) a static
+placeholder, not wired to the real adapter. This was found by directly asking "how would someone
+actually test this," not by a task list — a reminder that "the adapter works" and "the product
+works" are different claims.
+
+### Task 5.1: `deck claude developer` command — DONE
+
+- Added `parseClaudeArgs()` to `apps/cli/src/cli-args.ts`, mirroring `parseCodexArgs()`'s
+  exec/resume grammar exactly, minus Codex-specific flags this adapter doesn't implement
+  (`--local-only`, `--memory=`). Widened `ParsedArgs`'s `runnerId` union to include `"claude"`.
+  `main.tsx`'s dispatch for `command: "runner-launch"` needed **zero changes** — confirmed by
+  reading it first: it already resolves the adapter generically via
+  `adapterRegistry.get(parsed.runnerId)` and calls the shared `runRunnerLaunch()`, which only
+  ever calls generic `RunnerAdapter` methods already built in Phases 2–4.
+- Generalized `serializeCodexExecPrompt`'s two error messages (previously hardcoded "Codex exec
+  prompt...") to be runner-neutral, since the function turned out to already be 100% generic
+  internally and is now genuinely shared rather than Codex-only.
+
+**Real bug found and fixed while testing this for real, not by inspection:** the first live
+`deck claude developer --dry-run` run printed `(no file mutations)` and then
+`! Exact mutation metadata is unavailable; apply is blocked.` —
+`buildClaudeDeveloperTeamInstallPlan` never populated the optional
+`RunnerDeveloperTeamInstallPlan.mutationPreview` field, and `apps/cli/src/runner-launch-command.ts`
+treats `mutationPreview === undefined` (with `files.length > 0`) as `previewIncomplete`, which
+**unconditionally blocks apply** — meaning every single `deck claude developer` apply would have
+failed, in every case, forever, despite all of Phases 1–4's tests passing (none of them exercise
+this shared CLI-level gate). Fixed in `developer-team-install.ts` by computing a real
+`mutationPreview` entry per file — `action` (`create`/`update`), `preimage`/`postimage` (SHA256
+content hashes, `"absent"` for a not-yet-existing file), `ownership` — mirroring Codex's own
+`mutationPreview` construction exactly (`hash()`, the `"absent"` convention, the
+`kind:marker` ownership string shape). `files[]` still always represents the complete desired
+state (so `applyClaudeFiles`'s own idempotency check still works unchanged); `mutationPreview[]`
+now separately reports only entries that actually differ from disk, so a byte-identical reapply
+previews as "(no file mutations)" correctly rather than as a false diff.
+
+**Also caught during this phase, a testing-process near-miss, not a code bug:** an early manual
+verification run used `bun run --cwd apps/cli deck claude developer ...` from inside a scratch
+test directory. `--cwd` changed the spawned process's actual `process.cwd()` to `apps/cli`, so
+`resolveProjectRoot()` walked up from there and resolved to the real `~/projects/deck` checkout
+itself — the Developer Team install briefly wrote real `.claude/agents/`, `.claude/skills/`, and
+`CLAUDE.md` files into the user's actual fork working tree (never committed; caught and removed
+within the same turn via `git status`, confirmed untracked, confirmed safe to delete). Every
+subsequent verification in this phase invoked `bun run <absolute-path-to-main.tsx> ...` directly
+from the scratch directory instead, confirmed correct via a `resolveProjectRoot()` probe before
+trusting any further run. Recorded here as a concrete illustration of why `git status` before
+any operation that touches a working tree is a real, load-bearing habit and not boilerplate.
+
+**Verification — all real, live, through the actual `deck` binary, not test scripts:**
+- `bun run <main.tsx> claude developer --dry-run` against a real scratch project: correct
+  15-entry mutation preview with real SHA256 hashes and the launch-policy diagnostic.
+- `bun run <main.tsx> claude developer --install-only --yes`: files actually written to the
+  correct target directory; a second run against the same directory correctly previews
+  `(no file mutations)`.
+- `bun run <main.tsx> claude developer exec -- "Reply with exactly the word: OK"`: full chain —
+  install-plan preview, launch-policy diagnostics, real spawned `claude` process, real Anthropic
+  API call — returns `is_error: false`, `result: "OK"`, exit code 0.
+- `bun test apps/cli/src/cli-args.test.ts`: 59/59 pass, including new Claude grammar/rejection
+  tests mirroring Codex's own test shapes exactly.
+- `bun test packages/adapter-claude`: 120/120 pass (up from 117), including 3 new
+  `mutationPreview` tests that would have caught this bug directly (fresh install previews all
+  "create"; idempotent reapply previews zero mutations; a single changed assignment previews
+  exactly one "update", not a full rebuild).
+- Full `bun test`: 4742 pass / 24 fail / 3 errors across 315 files — `diff` against a
+  stash-based pre-Phase-5 baseline is byte-for-byte identical (exit 0): zero regressions,
+  including in the shared `cli-args.ts` this phase touched. `tsc --noEmit`: 0 new errors.
+
+## Phase 6: Documentation and hardening
+
+### Task 6.1: Update support documentation
 
 - Update `docs/runners.md`, `docs/runner-support.md`, `docs/reference/support-matrix.md` to
   reflect Claude's actual, earned status (`static-compatible`, not full parity) per
@@ -376,7 +448,7 @@ This phase touched zero files outside `packages/adapter-claude`.
 **Verification:** `deck skill-registry`/documentation-governance tests (see
 `tests/documentation-governance.test.ts`) pass against the updated docs.
 
-### Task 5.2: Full regression gate
+### Task 6.2: Full regression gate
 
 - Run `bun test` (full suite), typecheck, and build across the monorepo.
 

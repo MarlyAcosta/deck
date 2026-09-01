@@ -296,6 +296,50 @@ place available — `model:` (mapped to Claude's native alias) is a real Claude 
 `# deck-effort: "..."` is a YAML comment Deck itself defines and reads back, since Claude Code
 has no native per-subagent reasoning-effort frontmatter field to reuse.
 
+## The CLI command surface was not in the original plan (Phase 5)
+
+Phases 0–4 built and thoroughly verified `ClaudeRunnerAdapter` itself, but never asked "how does
+a user actually invoke this." Reading `apps/cli/src/cli-args.ts` showed `ParsedArgs`'s
+`runner-launch` variant was typed `runnerId: "codex" | "opencode"` — Claude had no CLI grammar
+at all, and `menu-options.ts`'s `"claude-development"` entry is a static placeholder label, not
+wired to the adapter (unchanged by this proposal — that's the interactive-TUI integration this
+change never scoped, see "Deferred: trusted execution boundary" below for the same pattern
+applied to a different gap).
+
+**The fix was small because `main.tsx`'s dispatch is already runner-agnostic**, confirmed by
+reading it before writing anything: `if (parsed.command === "runner-launch") { const adapter =
+adapterRegistry.get(parsed.runnerId); ... }` calls only generic `RunnerAdapter` methods —
+everything Phases 2–4 already built. Adding the CLI surface was purely a parsing change
+(`parseClaudeArgs`, mirroring `parseCodexArgs`), not new execution logic.
+
+**Real bug found only by testing the real binary, invisible to every prior test:**
+`apps/cli/src/runner-launch-command.ts` computes `previewIncomplete = plan.files.length > 0 &&
+plan.mutationPreview === undefined` and **unconditionally blocks apply** when true. Every one of
+Phases 1–4's tests calls `buildDeveloperTeamInstallPlan`/`applyDeveloperTeamInstall` directly,
+bypassing this shared CLI-level gate entirely — so `mutationPreview` being permanently
+`undefined` was invisible until an actual `deck claude developer --dry-run` run against a real
+project. Every real apply would have failed, forever. Fixed by computing real mutation entries
+(SHA256 `preimage`/`postimage`, `"absent"` for not-yet-existing files, an `ownership` string)
+per file, mirroring Codex's own `mutationPreview` construction in
+`packages/adapter-codex/src/runner-adapter.ts` exactly — same hashing, same `"absent"`
+convention, same `kind:marker` ownership shape. This is recorded as the clearest example in this
+whole change of why "the unit tests pass" and "the product works end to end" are different
+claims, and why the plan explicitly budgeted a real `deck` invocation as its own verification
+step rather than treating passing tests as sufficient.
+
+**A testing-process near-miss, not a code bug, worth recording anyway:** verifying this fix used
+`bun run --cwd apps/cli deck claude developer ...` from a scratch test directory. `--cwd`
+changed the spawned process's actual `process.cwd()` to `apps/cli`, so
+`apps/cli/src/project-root.ts`'s `resolveProjectRoot()` walked upward from there and resolved to
+the real `~/projects/deck` checkout — the apply step briefly wrote real, untracked
+`.claude/agents/`, `.claude/skills/`, and `CLAUDE.md` files into the user's actual fork working
+tree. Caught within the same turn by running `git status` before assuming anything about the
+result (per this session's own standing discipline), confirmed every added path was untracked
+(`??`, never staged or committed), and removed. Every subsequent verification run used
+`bun run <absolute-path-to-main.tsx> ...` from the scratch directory instead of relying on
+`--cwd`, confirmed correct via a one-line `resolveProjectRoot()` probe script before trusting
+any further apply.
+
 ## Deferred: trusted execution boundary
 
 Codex's design required identifying a trusted runner-host bridge (dossier continuity, one-use

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -9,9 +10,15 @@ import type {
 } from "@deck/core";
 import type { DeveloperTeamInstallFile, RunnerDeveloperTeamInstallPlan } from "@deck/core/runner-capability";
 
-import { buildAgentFileContent, buildSkillFileContent, isClaudeOwnedContent } from "./agent-files";
-import { mergeClaudeMd } from "./claude-md";
+import { buildAgentFileContent, buildSkillFileContent, isClaudeOwnedContent, CLAUDE_OWNED_MARKER } from "./agent-files";
+import { mergeClaudeMd, CLAUDE_MD_START, CLAUDE_MD_END } from "./claude-md";
 import { validateClaudeInstructionTranslation } from "./instruction-translation";
+
+type MutationPreviewEntry = { action: "create" | "update" | "delete"; path: string; preimage: string; postimage: string; ownership: string };
+
+function hash(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
 
 function readExistingFile(projectRoot: string, relativePath: string): string | undefined {
   const absolute = join(projectRoot, relativePath);
@@ -44,6 +51,7 @@ export function buildClaudeDeveloperTeamInstallPlan(input: DeveloperTeamAdapterI
   const diagnostics: string[] = [];
   let blocked = false;
   const files: DeveloperTeamInstallFile[] = [];
+  const mutationPreview: MutationPreviewEntry[] = [];
 
   const built = buildDeveloperTeamManifest({
     team: DEVELOPER_TEAM,
@@ -69,7 +77,20 @@ export function buildClaudeDeveloperTeamInstallPlan(input: DeveloperTeamAdapterI
       diagnostics.push(`${path} already exists and is not Deck-owned; refusing to overwrite it.`);
       return;
     }
+    // files[] always represents the complete desired state (apply's own idempotency check
+    // — see transaction.ts's applyClaudeFiles — skips the actual write when content already
+    // matches). mutationPreview only records entries where something will actually change, so
+    // a byte-identical reapply previews as "(no file mutations)" rather than a false diff.
     files.push({ path, content, kind, ...(skillId ? { skillId } : {}) });
+    if (existing !== content) {
+      mutationPreview.push({
+        action: existing === undefined ? "create" : "update",
+        path,
+        preimage: existing === undefined ? "absent" : hash(existing),
+        postimage: hash(content),
+        ownership: `deck-file:${CLAUDE_OWNED_MARKER}`,
+      });
+    }
   };
 
   for (const agent of built.manifest.agents) {
@@ -86,7 +107,16 @@ export function buildClaudeDeveloperTeamInstallPlan(input: DeveloperTeamAdapterI
     diagnostics.push(merge.collision);
   } else if (merge.content !== undefined) {
     files.push({ path: "CLAUDE.md", content: merge.content, kind: "other" });
+    if (merge.content !== claudeMdSource) {
+      mutationPreview.push({
+        action: existsSync(join(input.projectRoot, "CLAUDE.md")) ? "update" : "create",
+        path: "CLAUDE.md",
+        preimage: claudeMdSource === "" ? "absent" : hash(claudeMdSource),
+        postimage: hash(merge.content),
+        ownership: `marker-span:${CLAUDE_MD_START}|${CLAUDE_MD_END}`,
+      });
+    }
   }
 
-  return { files, diagnostics, blocked };
+  return { files, diagnostics, blocked, mutationPreview };
 }

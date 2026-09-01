@@ -35,6 +35,25 @@ describe("parseArgs", () => {
     expect(parseArgs(["codex", "developer", "exec", "--", "x".repeat(64 * 1024 + 1)])).toMatchObject({ command: "error", message: expect.stringContaining("payload limit") });
   });
 
+  test("parses the exact Claude developer grammar (mirrors Codex's exec/resume support, without --local-only/--memory=, which this adapter does not implement)", () => {
+    expect(parseArgs(["claude", "developer"])).toMatchObject({ command: "runner-launch", runnerId: "claude", teamId: "developer-team", launch: { mode: "interactive" } });
+    expect(parseArgs(["claude", "developer", "--install-only", "--dry-run"])).toMatchObject({ command: "runner-launch", runnerId: "claude", installOnly: true, dryRun: true });
+    expect(parseArgs(["claude", "developer", "--yes", "exec", "--", "fix", "it"])).toMatchObject({ command: "runner-launch", runnerId: "claude", yes: true, launch: { mode: "exec", prompt: ["fix", "it"], stdin: "closed", stdinPayload: { type: "utf8", content: "fix it" } } });
+    expect(parseArgs(["claude", "developer", "resume", "session-1"])).toMatchObject({ command: "runner-launch", runnerId: "claude", launch: { mode: "resume-by-id", sessionId: "session-1" } });
+    expect(parseArgs(["claude", "developer", "resume", "--last"])).toMatchObject({ command: "runner-launch", runnerId: "claude", launch: { mode: "resume-latest" } });
+  });
+
+  test("rejects malformed Claude grammar instead of guessing", () => {
+    expect(parseArgs(["claude", "developer", "exec", "fix it"]).command).toBe("error");
+    expect(parseArgs(["claude", "developer", "resume"]).command).toBe("error");
+    expect(parseArgs(["claude", "developer", "--install-only", "exec", "--", "x"]).command).toBe("error");
+    expect(parseArgs(["claude", "other"]).command).toBe("error");
+  });
+
+  test("rejects unsafe Claude exec stdin payloads the same way Codex's does (shared serializeCodexExecPrompt)", () => {
+    expect(parseArgs(["claude", "developer", "exec", "--", "safe\0unsafe"])).toMatchObject({ command: "error", message: expect.stringContaining("NUL") });
+  });
+
   test("makes the existing OpenCode developer launch reachable", () => {
     expect(parseArgs(["opencode", "developer", "--yes"])).toMatchObject({
       command: "runner-launch",
