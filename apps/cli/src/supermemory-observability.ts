@@ -22,8 +22,8 @@ export function createSupermemoryObservabilitySink(input: { stateHome?: string; 
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     rotateIfNeeded(path);
     writeFileSync(path, "", { flag: "a", mode: 0o600 });
-  } catch (error) {
-    diagnostics.push(`Supermemory observability sink is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  } catch {
+    diagnostics.push("Supermemory observability sink is unavailable; continuing without runtime metric persistence.");
     return { path, healthy: false, diagnostics, observe() {}, health: () => ({ healthy: false, diagnostics }) };
   }
 
@@ -48,18 +48,27 @@ export function createSupermemoryObservabilitySink(input: { stateHome?: string; 
           runnerId: metric.runnerId,
           role: metric.role,
           scopeFingerprint: metric.scopeFingerprint,
+          sessionFingerprint: metric.sessionFingerprint,
+          logicalTurnFingerprint: metric.logicalTurnFingerprint,
+          captureSource: metric.captureSource,
           approximateInputTokens: metric.approximateInputTokens,
           inputByteCount: metric.inputByteCount,
           inputSha256: metric.inputSha256,
           approximateInjectedTokens: metric.approximateInjectedTokens,
           injectedByteCount: metric.injectedByteCount,
+          injectedSha256: metric.injectedSha256,
+          snapshotGeneration: metric.snapshotGeneration,
+          hostExecutableSha256: metric.hostExecutableSha256,
+          hostExecutableByteCount: metric.hostExecutableByteCount,
+          hostExecutableSource: metric.hostExecutableSource,
+          hostExecutableKind: metric.hostExecutableKind,
           resultCount: metric.resultCount,
           dependency: metric.dependency,
         };
         writeFileSync(path, `${JSON.stringify(event)}\n`, { flag: "a", mode: 0o600 });
-      } catch (error) {
+      } catch {
         healthy = false;
-        diagnostics.push(`Supermemory observability write failed: ${error instanceof Error ? error.message : String(error)}`);
+        diagnostics.push("Supermemory observability write failed; continuing without runtime metric persistence.");
       }
     },
     health: () => ({ healthy, diagnostics }),
@@ -86,8 +95,8 @@ export function checkSupermemoryObservabilitySink(input: { stateHome?: string } 
     } else {
       diagnostics.push("Supermemory observability directory is not initialized yet; Doctor did not create it.");
     }
-  } catch (error) {
-    diagnostics.push(`Supermemory observability sink is not currently writable/readable: ${error instanceof Error ? error.message : String(error)}`);
+  } catch {
+    diagnostics.push("Supermemory observability sink is not currently writable/readable.");
   }
   return { ok: diagnostics.every((diagnostic) => /not initialized yet/.test(diagnostic)), path, diagnostics };
 }

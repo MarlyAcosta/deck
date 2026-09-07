@@ -262,6 +262,8 @@ test("D-REACH-04 OpenCode install materializes the packaged execution plugin", (
     expect(pluginContent).toContain("deterministic-targeted-repair-authority-v1");
     const sourceContent = readFileSync(join(process.cwd(), "packages/adapter-opencode/assets/opencode/plugins/developer-team-execution.ts"), "utf8");
     expect(pluginContent).toContain(`source-sha256:${createHash("sha256").update(sourceContent).digest("hex")}`);
+    const generatedContent = readFileSync(join(process.cwd(), "packages/adapter-opencode/assets/opencode/plugins/developer-team-execution.generated.js"), "utf8");
+    expect(pluginContent).toBe(generatedContent);
     expect(pluginContent).not.toContain(process.cwd());
     expect(pluginContent).not.toContain("supermemory_search_memory");
     expect(pluginContent).not.toContain("supermemory_add_memory");
@@ -558,15 +560,20 @@ function openCodeMessageUpdatedEvent(sessionID: string, id: string, fields: Reco
   return { event: { type: "message.updated", properties: { info: { id, sessionID, role: "assistant", ...fields } } } };
 }
 
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
 test("OpenCode automatic managed memory context is retained for every inference in one logical user turn", async () => {
-  const events: unknown[] = [];
+  const events: Record<string, unknown>[] = [];
   const providerUserCaptureIds = new Set<unknown>();
+  const injectionAcks = () => events.filter((event) => event.event === "injection_ack");
   const plugin = createOpenCodeDeveloperTeamExecutionPluginV1({
     memoryLoopback: {
       endpoint: "http://127.0.0.1:1/deck-runner-memory/v1",
       token: "loopback-token",
       post: async (_endpoint, _token, body) => {
-        const event = JSON.parse(body);
+        const event = JSON.parse(body) as Record<string, unknown>;
         events.push(event);
         if (event.event === "capture" && event.source === "trusted-user-prompt" && event.sessionId === "s") providerUserCaptureIds.add(event.eventId);
         if (event.event !== "session_start") return { ok: true };
@@ -586,6 +593,7 @@ test("OpenCode automatic managed memory context is retained for every inference 
   await hooks["experimental.chat.messages.transform"]({}, pendingMessagesOutput);
   expect(pendingMessagesOutput.messages).toHaveLength(1);
   expect(pendingMessagesOutput.messages[0]!.info.role).toBe("user");
+  expect(injectionAcks()).toHaveLength(0);
 
   const missingSessionOutput = { system: ["missing base"] };
   await hooks["experimental.chat.system.transform"]({}, missingSessionOutput);
@@ -596,10 +604,25 @@ test("OpenCode automatic managed memory context is retained for every inference 
   expect(modelOutput.system).toHaveLength(2);
   expect(modelOutput.system[0]).toBe("base system");
   expect(modelOutput.system[1]).toContain("s:m:lead");
+  const firstAck = injectionAcks()[0]!;
+  const firstGeneration = firstAck.snapshotGeneration as number;
+  expect(typeof firstGeneration).toBe("number");
+  expect(firstGeneration).toBeGreaterThan(0);
+  expect(firstGeneration).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+  expect(firstAck).toMatchObject({
+    event: "injection_ack",
+    sessionId: "s",
+    logicalTurnId: "m",
+    snapshotGeneration: firstGeneration,
+    injectedByteCount: Buffer.byteLength(modelOutput.system[1]!, "utf8"),
+    injectedSha256: sha256Hex(modelOutput.system[1]!),
+  });
 
   const retainedSecondInference = { system: ["base system"] };
   await hooks["experimental.chat.system.transform"]({ sessionID: "s" }, retainedSecondInference);
   expect(retainedSecondInference.system).toEqual(["base system", "<DECK_ADAPTIVE_CONTEXT_JSON_V1>s:m:lead</DECK_ADAPTIVE_CONTEXT_JSON_V1>"]);
+  expect(injectionAcks()).toHaveLength(2);
+  expect(new Set(injectionAcks().map((event) => event.eventId)).size).toBe(2);
 
   const args: Record<string, unknown> = { subagent_type: "deck-apply-deep" };
   await hooks["tool.execute.before"]({ tool: "task", sessionID: "s", callID: "c" }, { args });
@@ -640,11 +663,37 @@ test("OpenCode automatic managed memory context is retained for every inference 
   await hooks["experimental.chat.system.transform"]({ sessionID: "s" }, afterDeletion);
   expect(afterDeletion.system).toEqual([]);
 
-  expect(events).toContainEqual(expect.objectContaining({ event: "session_start", sessionId: "s", messageId: "m", role: "lead", eventId: expect.any(String), timestamp: expect.any(Number) }));
+  expect(events).toContainEqual(expect.objectContaining({ event: "session_start", sessionId: "s", messageId: "m", logicalTurnId: "m", snapshotGeneration: firstAck.snapshotGeneration, role: "lead", eventId: expect.any(String), timestamp: expect.any(Number) }));
   expect(events.filter((event) => (event as { event?: string; sessionId?: string }).event === "session_start" && (event as { sessionId?: string }).sessionId === "s")).toHaveLength(1);
   expect(providerUserCaptureIds).toEqual(new Set(["s:m:user_capture"]));
   expect(events).toContainEqual(expect.objectContaining({ event: "session_start", sessionId: "child-apply", messageId: "child-m", role: "apply-deep", eventId: expect.any(String), timestamp: expect.any(Number) }));
   expect(events.some((event) => (event as { event?: string }).event === "role_start")).toBe(false);
+});
+
+test("OpenCode injection acknowledgment transport failures remain fail-open after the actual system push", async () => {
+  let ackAttempts = 0;
+  const hooks = await createOpenCodeDeveloperTeamExecutionPluginV1({
+    memoryLoopback: {
+      endpoint: "http://127.0.0.1:1/deck-runner-memory/v1",
+      token: "loopback-token",
+      post: async (_endpoint, _token, body) => {
+        const event = JSON.parse(body) as Record<string, unknown>;
+        if (event.event === "injection_ack") {
+          ackAttempts += 1;
+          throw new Error("ack transport failed with token=secret");
+        }
+        if (event.event === "session_start") return { ok: true, advisoryText: "<DECK_ADAPTIVE_CONTEXT_JSON_V1>fail-open ack</DECK_ADAPTIVE_CONTEXT_JSON_V1>" };
+        return { ok: true };
+      },
+    },
+  })();
+
+  await hooks["chat.message"]({ sessionID: "ack-fail-open", messageID: "turn" }, { message: { role: "user" }, parts: [{ type: "text", text: "Remember ack failures are fail open." }] });
+  const output = { system: ["base"] };
+
+  await expect(hooks["experimental.chat.system.transform"]({ sessionID: "ack-fail-open" }, output)).resolves.toBeUndefined();
+  expect(output.system).toEqual(["base", "<DECK_ADAPTIVE_CONTEXT_JSON_V1>fail-open ack</DECK_ADAPTIVE_CONTEXT_JSON_V1>"]);
+  expect(ackAttempts).toBe(1);
 });
 
 test("OpenCode compaction request markers suppress system injection without consuming the active turn snapshot", async () => {
@@ -670,6 +719,7 @@ test("OpenCode compaction request markers suppress system injection without cons
   const beforeCompaction = { system: [] as string[] };
   await hooks["experimental.chat.system.transform"]({ sessionID: "compact-a" }, beforeCompaction);
   expect(beforeCompaction.system).toEqual(["<DECK_ADAPTIVE_CONTEXT_JSON_V1>compact-a:user-a:snapshot</DECK_ADAPTIVE_CONTEXT_JSON_V1>"]);
+  expect(events.filter((event) => event.event === "injection_ack")).toHaveLength(1);
 
   await hooks.event(openCodeMessageUpdatedEvent("compact-a", "msg_top_level_created_only", { created: 1500, mode: "compaction", agent: "compaction", summary: true }));
   const afterFabricatedTopLevelCreated = { system: [] as string[] };
@@ -683,6 +733,7 @@ test("OpenCode compaction request markers suppress system injection without cons
   await hooks["experimental.chat.system.transform"]({ sessionID: "compact-a" }, compactionRetryTwo);
   expect(compactionRetryOne.system).toEqual([]);
   expect(compactionRetryTwo.system).toEqual([]);
+  expect(events.filter((event) => event.event === "injection_ack")).toHaveLength(2);
 
   await hooks.event(openCodeMessageUpdatedEvent("compact-a", "msg_compact", { time: { created: 2000, completed: "done" }, mode: "compaction", agent: "compaction", summary: true }));
   await hooks.event(openCodeMessageUpdatedEvent("compact-a", "msg_older_normal", { time: { created: 1000 }, mode: "chat", agent: "deck-lead", summary: false }));
@@ -925,7 +976,6 @@ test("OpenCode E2E harness retains automatic memory through deck-lead skill and 
   const events: Record<string, unknown>[] = [];
   let automaticRecall = 0;
   let explicitRecall = 0;
-  let contextMode = 0;
   const expectMemoryTerms = (output: { system: string[] }) => {
     const visible = output.system.join("\n");
     expect(visible).toContain("Orion");
@@ -944,7 +994,6 @@ test("OpenCode E2E harness retains automatic memory through deck-lead skill and 
           return { ok: true, advisoryText: "<DECK_ADAPTIVE_CONTEXT_JSON_V1>Orion; Nebula Boundary; core/adapter policy</DECK_ADAPTIVE_CONTEXT_JSON_V1>" };
         }
         if (event.event === "explicit_recall") explicitRecall += 1;
-        if (event.event === "context_mode") contextMode += 1;
         return { ok: true };
       },
     },
@@ -975,18 +1024,41 @@ test("OpenCode E2E harness retains automatic memory through deck-lead skill and 
     { sessionID: "e2e", messageID: undefined, agent: "deck-lead", model: "anthropic/claude-sonnet-4", variant: "opencode" },
     { message: { id: "msg_assistant_live", sessionID: "e2e", role: "assistant", agent: "deck-lead", model: "anthropic/claude-sonnet-4" }, parts: [{ type: "text", text: "Final outcome used retained memory." }] },
   );
+  const sessionStartEvent = events.find((event) => event.event === "session_start")!;
+  const generation = sessionStartEvent.snapshotGeneration as number;
+  expect(typeof generation).toBe("number");
+  expect(generation).toBeGreaterThan(0);
+  expect(generation).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
   expect(events.filter((event) => event.event === "capture" && event.source === "trusted-user-prompt")).toEqual([
-    expect.objectContaining({ eventId: "e2e:msg_user_live:user_capture", correlationId: "msg_user_live" }),
+    expect.objectContaining({ eventId: "e2e:msg_user_live:user_capture", correlationId: "msg_user_live", logicalTurnId: "msg_user_live", snapshotGeneration: generation }),
   ]);
   expect(events.filter((event) => event.event === "capture" && event.source === "trusted-final-assistant")).toEqual([
-    expect.objectContaining({ eventId: "e2e:msg_assistant_live:assistant_capture", correlationId: "msg_assistant_live" }),
+    expect.objectContaining({ eventId: "e2e:msg_assistant_live:assistant_capture", correlationId: "msg_assistant_live", logicalTurnId: "msg_user_live", snapshotGeneration: generation }),
   ]);
   expect(events.filter((event) => event.event === "session_start")).toEqual([
-    expect.objectContaining({ eventId: "e2e:msg_user_live:session_start", messageId: "msg_user_live" }),
+    expect.objectContaining({ eventId: "e2e:msg_user_live:session_start", messageId: "msg_user_live", logicalTurnId: "msg_user_live", snapshotGeneration: generation }),
   ]);
+  for (const event of events.filter((entry) => entry.event === "capture" || entry.event === "injection_ack")) {
+    expect(event.snapshotGeneration).toBe(generation);
+  }
+  const injectionAcks = events.filter((event) => event.event === "injection_ack");
+  expect(injectionAcks).toHaveLength(3);
+  expect(new Set(injectionAcks.map((event) => event.eventId)).size).toBe(3);
+  for (const [index, ack] of injectionAcks.entries()) {
+    const pushed = [firstInference, secondInferenceAfterSkill, thirdInferenceAfterTool][index]!.system.at(-1)!;
+    expect(ack).toMatchObject({
+      event: "injection_ack",
+      sessionId: "e2e",
+      logicalTurnId: "msg_user_live",
+      snapshotGeneration: generation,
+      injectedByteCount: Buffer.byteLength(pushed, "utf8"),
+      injectedSha256: sha256Hex(pushed),
+    });
+  }
   expect(automaticRecall).toBe(1);
   expect(explicitRecall).toBe(0);
-  expect(contextMode).toBe(0);
+  expect(Object.keys(hooks.tool ?? {})).toEqual(["deck_project_memory_recall"]);
+  expect(events.some((event) => event.event === "context_mode")).toBe(false);
 });
 
 test("OpenCode rejects output message identity from a different native session", async () => {

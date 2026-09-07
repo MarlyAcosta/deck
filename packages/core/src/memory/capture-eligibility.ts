@@ -59,7 +59,7 @@ export function evaluateAdaptiveMemoryCaptureEligibility(input: {
   const envLines = [...inspection.matchAll(ENV_DUMP_LINE)].length;
   if (matchesHighConfidenceSecret(inspection)) return rejected("secret_detected", "Capture skipped because content contains high-confidence secret material.");
   if (envLines >= 2) return rejected("environment_dump", "Capture skipped because content is shaped like an environment dump.");
-  if (/^\s*diff --git\b/m.test(inspection) || patchLineRatio(lines) >= 0.35 && lines.length >= 6) {
+  if (looksLikeDiffOrPatch(inspection, lines)) {
     return rejected("diff_or_patch", "Capture skipped because content is shaped like a diff or patch.");
   }
   if (stackTraceLineCount(inspection) >= 2) return rejected("stack_trace", "Capture skipped because content is shaped like a stack trace.");
@@ -90,9 +90,19 @@ function stripQuoteAndFenceMarkers(content: string): string {
     .trim();
 }
 
+function looksLikeDiffOrPatch(content: string, lines: readonly string[]): boolean {
+  if (/^\s*diff --git\b/m.test(content)) return true;
+  if (lines.some((line) => /^---(?:\s|$)/.test(line)) && lines.some((line) => /^\+\+\+(?:\s|$)/.test(line))) return true;
+  if (lines.some((line) => /^(?:@@(?:\s|$)|Index:(?:\s|$))/.test(line))) return true;
+
+  const hasRemovedLine = lines.some((line) => /^-(?!-{2}(?:\s|$))/.test(line));
+  const hasAddedLine = lines.some((line) => /^\+(?!\+\+(?:\s|$))/.test(line));
+  return hasRemovedLine && hasAddedLine && lines.length >= 6 && patchLineRatio(lines) >= 0.35;
+}
+
 function patchLineRatio(lines: readonly string[]): number {
   if (lines.length === 0) return 0;
-  const patchLines = lines.filter((line) => /^(?:\+{1,3}|-{1,3}|@@\s|Index: |={7,})/.test(line)).length;
+  const patchLines = lines.filter((line) => /^(?:\+(?!\+{2}(?:\s|$))|-(?!-{2}(?:\s|$)))/.test(line)).length;
   return patchLines / lines.length;
 }
 

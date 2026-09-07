@@ -8,6 +8,21 @@ import {
   type SupermemoryRuntimeTransport,
 } from "./runtime";
 
+const REACT_SURVEY_LIVE_PROMPT = `Esta es una decisión arquitectónica duradera y vigente de este proyecto:
+
+- El nombre interno de la arquitectura es Vega.
+- La convención que define la frontera entre política de dominio y traducción
+  técnica se llama Pulsar Boundary.
+- La política de dominio pertenece al core.
+- Los adapters pueden implementar la traducción técnica necesaria.
+- Los adapters no pueden redefinir la política de dominio.
+
+Usa únicamente la Skill deck-lead si Deck la exige. No uses recall explícito,
+Context Mode, herramientas de memoria, inspección del repositorio, búsqueda web
+ni ninguna otra herramienta.
+
+Confirma la decisión brevemente, sin añadir nuevas reglas.`;
+
 function createFakeTransport() {
   const calls: Array<{ operation: string; payload: unknown }> = [];
   const transport: SupermemoryRuntimeTransport = {
@@ -67,6 +82,26 @@ describe("Supermemory first-class runtime", () => {
     expect(result.metrics).toMatchObject({ operation: "capture", status: "succeeded", provider: "supermemory" });
     expect(JSON.stringify(result.metrics)).not.toContain("runtime boundary");
     expect(JSON.stringify(result.metrics)).not.toContain("kevin15011_deck");
+  });
+
+  test("captures the exact react-survey durable Markdown-list prompt through fake transport", async () => {
+    const fake = createFakeTransport();
+    const runtime = createSupermemoryRuntime({
+      canonicalScope: "sm_project_v1_kevin15011_deck",
+      sessionId: "runner-session-react-survey",
+      transport: fake.transport,
+    });
+
+    const result = await runtime.capture({
+      role: "user",
+      source: "trusted-user-prompt",
+      content: REACT_SURVEY_LIVE_PROMPT,
+      capturedAt: "2026-09-02T00:00:00.000Z",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]).toMatchObject({ operation: "add" });
   });
 
   test("rejects secret capture before transport", async () => {

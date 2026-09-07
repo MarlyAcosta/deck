@@ -30,6 +30,13 @@ type ScenarioResult = Readonly<{
   runtimeIds?: readonly string[];
 }>;
 
+type ScenarioDefinition = Readonly<{
+  query: string;
+  expected: readonly string[];
+  forbidden?: readonly string[];
+  role?: Parameters<ReturnType<typeof createSupermemoryRuntime>["search"]>[0]["role"];
+}>;
+
 type MemoryRecord = Readonly<{
   id: string;
   scope: string;
@@ -62,21 +69,23 @@ const seed: readonly MemoryRecord[] = [
   rec("foreign", OTHER_SCOPE, "Foreign repository convention that must never appear in Deck context.", ["containerTag", "foreign"]),
 ];
 
-const scenarios: Readonly<Record<ScenarioName, { query: string; expected: readonly string[]; forbidden?: readonly string[]; role?: Parameters<ReturnType<typeof createSupermemoryRuntime>["search"]>[0]["role"] }>> = {
-  "temporal-supersession": { query: "current memory provider", expected: ["current-runtime"], forbidden: ["old-engram"] },
-  "stale-contradictory-dominance": { query: "MCP primary automatic capture", expected: ["current-mcp-optional"], forbidden: ["old-mcp-primary"] },
-  "recurring-problems": { query: "stdout logs failure", expected: ["recurring-stdout"] },
-  "changed-decisions": { query: "enabled activeProvider decision", expected: ["changed-enabled"] },
-  preferences: { query: "explicit fail open preference", expected: ["pref-fail-open"] },
-  conventions: { query: "containerTag customId convention", expected: ["conv-scope"] },
-  "root-causes": { query: "interactive hook root cause", expected: ["root-hook"] },
-  rediscovery: { query: "double ingestion explicit remember", expected: ["rediscovery-double-write", "bench-explicit-remember"] },
-  "role-budgets": { query: "quality budget apply-fast", expected: ["quality-budget"], role: "quality" },
-  "project-leakage": { query: "containerTag convention foreign", expected: ["conv-scope"], forbidden: ["foreign"] },
-  "secret-exclusion": { query: "current runtime", expected: ["current-runtime", "current-mcp-optional"] },
-  "latency-context-size": { query: "current runtime MCP write stdout enabled", expected: ["current-mcp-optional"] },
-  "mcp-primary-vs-runtime": { query: "explicit remember runtime capture", expected: ["bench-explicit-remember"] },
-};
+function scenariosFor(explicitRuntimeMemoryId: string): Readonly<Record<ScenarioName, ScenarioDefinition>> {
+  return {
+    "temporal-supersession": { query: "current memory provider", expected: ["current-runtime"], forbidden: ["old-engram"] },
+    "stale-contradictory-dominance": { query: "MCP primary automatic capture", expected: ["current-mcp-optional"], forbidden: ["old-mcp-primary"] },
+    "recurring-problems": { query: "stdout logs failure", expected: ["recurring-stdout"] },
+    "changed-decisions": { query: "enabled activeProvider decision", expected: ["changed-enabled"] },
+    preferences: { query: "explicit fail open preference", expected: ["pref-fail-open"] },
+    conventions: { query: "containerTag customId convention", expected: ["conv-scope"] },
+    "root-causes": { query: "interactive hook root cause", expected: ["root-hook"] },
+    rediscovery: { query: "double ingestion explicit remember", expected: ["rediscovery-double-write", explicitRuntimeMemoryId] },
+    "role-budgets": { query: "quality budget apply-fast", expected: ["quality-budget"], role: "quality" },
+    "project-leakage": { query: "containerTag convention foreign", expected: ["conv-scope"], forbidden: ["foreign"] },
+    "secret-exclusion": { query: "current runtime", expected: ["current-runtime", "current-mcp-optional"] },
+    "latency-context-size": { query: "current runtime MCP write stdout enabled", expected: ["current-mcp-optional"] },
+    "mcp-primary-vs-runtime": { query: "explicit remember runtime capture", expected: [explicitRuntimeMemoryId] },
+  };
+}
 
 export async function runDeckMemoryBench(): Promise<readonly ScenarioResult[]> {
   const transport = new FakeSupermemoryTransport(seed);
@@ -85,19 +94,20 @@ export async function runDeckMemoryBench(): Promise<readonly ScenarioResult[]> {
     role: "user",
     source: "explicit-remember",
     dependency: "explicit-remember",
-    content: "Runtime captured explicit remember prevents MCP double ingestion and is discoverable later.",
-    correlationId: "bench-explicit-remember",
+    content: "Runtime capture of explicit remember prevents MCP double ingestion and is discoverable later.",
   });
   if (!explicit.ok) throw new Error(explicit.diagnostics.join(" "));
+  const explicitRuntimeMemoryId = transport.capturedIds[0];
+  if (!explicitRuntimeMemoryId) throw new Error("explicit runtime capture did not provide a stable provider identity");
 
   const secretCapture = await runtime.capture({
     role: "user",
     source: "trusted-user-prompt",
     dependency: "automatic",
     content: "sk-supersecretvalue",
-    correlationId: "bench-secret-rejection",
   });
   const baseline = runMcpPrimaryBaseline("explicit remember runtime capture");
+  const scenarios = scenariosFor(explicitRuntimeMemoryId);
 
   const results: ScenarioResult[] = [];
   for (const name of Object.keys(scenarios) as ScenarioName[]) {
@@ -118,7 +128,7 @@ export async function runDeckMemoryBench(): Promise<readonly ScenarioResult[]> {
     if (recall < RECALL_GATE) diagnostics.push(`missing expected records: ${scenario.expected.filter((id) => !ids.includes(id)).join(",")}`);
     if (byteSize > BYTE_BUDGET) diagnostics.push(`context exceeded byte budget ${BYTE_BUDGET}`);
     if (name === "secret-exclusion" && secretCapture.reason !== "secret_detected") diagnostics.push("secret-only capture was not rejected");
-    if (name === "mcp-primary-vs-runtime" && baseline.includes("bench-explicit-remember")) diagnostics.push("MCP-primary baseline unexpectedly captured explicit runtime memory");
+    if (name === "mcp-primary-vs-runtime" && baseline.includes(explicitRuntimeMemoryId)) diagnostics.push("MCP-primary baseline unexpectedly captured explicit runtime memory");
     const latencyMs = Date.now() - started;
     if (latencyMs > LATENCY_BUDGET_MS) diagnostics.push(`latency exceeded ${LATENCY_BUDGET_MS}ms`);
     results.push({
@@ -138,11 +148,14 @@ export async function runDeckMemoryBench(): Promise<readonly ScenarioResult[]> {
 
 class FakeSupermemoryTransport implements SupermemoryRuntimeTransport {
   #records: MemoryRecord[];
+  readonly capturedIds: string[] = [];
   constructor(records: readonly MemoryRecord[]) { this.#records = [...records]; }
   async health() { return { ok: true }; }
   async add(payload: SupermemoryAddPayload) {
     if (/\[REDACTED/.test(payload.content) && payload.content.replace(/\[REDACTED[^\]]*\]/g, " ").trim().length === 0) return { skipped: true };
-    this.#records.push(rec(payload.metadata?.correlationId as string || payload.customId, payload.containerTag, payload.content, tokenize(payload.content)));
+    if (!payload.customId) throw new Error("Supermemory provider payload missing stable customId");
+    this.capturedIds.push(payload.customId);
+    this.#records.push(rec(payload.customId, payload.containerTag, payload.content, tokenize(payload.content)));
     return { ok: true };
   }
   async profile(payload: { containerTag: string }) {
@@ -164,6 +177,24 @@ class FakeSupermemoryTransport implements SupermemoryRuntimeTransport {
       .map(({ record }) => ({ id: record.id, memory: record.content }));
     return { results };
   }
+}
+
+export async function exerciseFakeSupermemoryTransportCustomIdConflict() {
+  const transport = new FakeSupermemoryTransport([]);
+  const content = "Stable custom identity proof document query marker for runtime recall.";
+  await transport.add({
+    customId: "stable-custom-id",
+    containerTag: SCOPE,
+    content,
+    metadata: { correlationId: "conflicting-correlation-id" },
+  } as SupermemoryAddPayload & { metadata: { correlationId: string } });
+  const documentQuery = await transport.search({ q: "identity proof document query marker", containerTag: SCOPE, limit: 5 });
+  const conflictingCorrelationQuery = await transport.search({ q: "conflicting-correlation-id", containerTag: SCOPE, limit: 5 });
+  return {
+    capturedIds: [...transport.capturedIds],
+    documentQueryResultIds: documentQuery.results.map((result) => result.id),
+    conflictingCorrelationQueryResultIds: conflictingCorrelationQuery.results.map((result) => result.id),
+  };
 }
 
 function runMcpPrimaryBaseline(query: string): readonly string[] {

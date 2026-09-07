@@ -1,5 +1,5 @@
 import { evaluateAdaptiveMemoryCaptureEligibility, fingerprintSupermemoryProjectScope, isCanonicalSupermemoryProjectScope } from "@deck/core";
-import { createHash } from "node:crypto";
+import { createAdaptiveMemoryContentReceipt } from "@deck/core/memory/adaptive-memory-observability-receipts";
 
 import {
   buildSupermemoryConversationIngest,
@@ -24,25 +24,40 @@ export type SupermemoryRolePolicy = Readonly<{
 
 export type SupermemoryRuntimeMetric = Readonly<{
   provider: "supermemory";
-  operation: "profile" | "search" | "capture" | "health" | "runtime_recall" | "runtime_lifecycle";
-  channel?: "runtime-recall" | "runtime-capture" | "external-unobservable-mcp";
+  operation: "profile" | "search" | "capture" | "health" | "runtime_recall" | "runtime_lifecycle" | "runtime_injection";
+  channel?: "runtime-recall" | "runtime-capture" | "external-unobservable-mcp" | "system-transform";
   status: "attempted" | "skipped" | "succeeded" | "failed";
   reason?: string;
   durationMs: number;
   runnerId?: string;
   role?: SupermemoryRuntimeRole;
   scopeFingerprint: string;
+  sessionFingerprint?: string;
+  logicalTurnFingerprint?: string;
+  captureSource?: SupermemoryCaptureSource;
   approximateInputTokens?: number;
   inputByteCount?: number;
   inputSha256?: string;
   approximateInjectedTokens?: number;
   injectedByteCount?: number;
+  injectedSha256?: string;
+  snapshotGeneration?: number;
+  hostExecutableSha256?: string;
+  hostExecutableByteCount?: number;
+  hostExecutableSource?: "proc-self-exe" | "process-exec-path";
+  hostExecutableKind?: "deck-canary" | "other";
   resultCount?: number;
   dependency?: SupermemoryRequestDependency;
 }>;
 
 export type SupermemoryCaptureSource = "trusted-user-prompt" | "trusted-final-assistant" | "explicit-remember";
 export type SupermemoryRequestDependency = "automatic" | "explicit-recall" | "explicit-remember" | "unobservable-external-mcp";
+
+export type SupermemoryRuntimeCorrelation = Readonly<{
+  sessionFingerprint?: string;
+  logicalTurnFingerprint?: string;
+  snapshotGeneration?: number;
+}>;
 
 export type SupermemoryRuntimeTransport = Readonly<{
   add(payload: SupermemoryAddPayload): Promise<unknown>;
@@ -130,14 +145,35 @@ export function resolveSupermemoryRolePolicy(role: SupermemoryRuntimeRole): Supe
 }
 
 function queryObservability(query: string): Pick<SupermemoryRuntimeMetric, "inputByteCount" | "inputSha256"> {
+  return inputReceipt(query);
+}
+
+function inputReceipt(value: string): Pick<SupermemoryRuntimeMetric, "inputByteCount" | "inputSha256"> {
+  const receipt = createAdaptiveMemoryContentReceipt(value);
   return {
-    inputByteCount: utf8ByteCount(query),
-    inputSha256: createHash("sha256").update(query, "utf8").digest("hex"),
+    inputByteCount: receipt.byteCount,
+    inputSha256: receipt.sha256,
   };
 }
 
-function utf8ByteCount(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+function injectedReceipt(value: string): Pick<SupermemoryRuntimeMetric, "injectedByteCount" | "injectedSha256"> {
+  const receipt = createAdaptiveMemoryContentReceipt(value);
+  return {
+    injectedByteCount: receipt.byteCount,
+    injectedSha256: receipt.sha256,
+  };
+}
+
+function correlationFields(correlation: SupermemoryRuntimeCorrelation | undefined): Pick<SupermemoryRuntimeMetric, "sessionFingerprint" | "logicalTurnFingerprint" | "snapshotGeneration"> {
+  return {
+    ...(correlation?.sessionFingerprint ? { sessionFingerprint: correlation.sessionFingerprint } : {}),
+    ...(correlation?.logicalTurnFingerprint ? { logicalTurnFingerprint: correlation.logicalTurnFingerprint } : {}),
+    ...(correlation?.snapshotGeneration !== undefined ? { snapshotGeneration: correlation.snapshotGeneration } : {}),
+  };
+}
+
+function captureReceiptCandidate(content: string): string {
+  return redactSupermemoryConversationContent(content.replace(/\r\n/g, "\n").replace(/[\t ]+$/gm, "").trim()).content;
 }
 
 export function createSupermemoryRuntime(input: {
@@ -180,13 +216,13 @@ export function createSupermemoryRuntime(input: {
   }
 
   return {
-    async profile(request: { role: SupermemoryRuntimeRole; q?: string; dependency?: SupermemoryRequestDependency }): Promise<SupermemoryRuntimeResult> {
+    async profile(request: { role: SupermemoryRuntimeRole; q?: string; dependency?: SupermemoryRequestDependency; correlation?: SupermemoryRuntimeCorrelation }): Promise<SupermemoryRuntimeResult> {
       const startedAt = now();
       if (!isCanonicalSupermemoryProjectScope(canonicalScope)) return invalidScope("profile", startedAt);
       const rolePolicy = resolveSupermemoryRolePolicy(request.role);
-      if (rolePolicy.profile === "skip") return skipped("profile", "role_policy_skip", rolePolicy, startedAt, metric);
+      if (rolePolicy.profile === "skip") return skipped("profile", "role_policy_skip", rolePolicy, startedAt, metric, request.dependency ?? "automatic", request.correlation);
       try {
-        emit({ operation: "profile", status: "attempted", role: request.role, dependency: request.dependency ?? "automatic", startedAt });
+        emit({ operation: "profile", status: "attempted", role: request.role, dependency: request.dependency ?? "automatic", ...correlationFields(request.correlation), startedAt });
         const response = await input.transport.profile({ containerTag: canonicalScope, q: request.q });
         const items = profileItems(response);
         const bounded = boundSupermemoryRetrievalItems({ items, maxItems: rolePolicy.maxResults, maxTokens: rolePolicy.maxTokens });
@@ -200,26 +236,27 @@ export function createSupermemoryRuntime(input: {
             role: request.role,
             resultCount: bounded.items.length,
             approximateInjectedTokens: countApproxTokens(injectedText),
-            injectedByteCount: utf8ByteCount(injectedText),
+            ...injectedReceipt(injectedText),
             dependency: request.dependency ?? "automatic",
+            ...correlationFields(request.correlation),
             startedAt,
           }),
         };
       } catch (error) {
-        return failure("profile", rolePolicy, startedAt, error, metric, request.dependency ?? "automatic");
+        return failure("profile", rolePolicy, startedAt, error, metric, request.dependency ?? "automatic", request.correlation);
       }
     },
 
-    async search(request: { role: SupermemoryRuntimeRole; query: string; dependency?: SupermemoryRequestDependency }): Promise<SupermemoryRuntimeResult> {
+    async search(request: { role: SupermemoryRuntimeRole; query: string; dependency?: SupermemoryRequestDependency; correlation?: SupermemoryRuntimeCorrelation }): Promise<SupermemoryRuntimeResult> {
       const startedAt = now();
       if (!isCanonicalSupermemoryProjectScope(canonicalScope)) return invalidScope("search", startedAt);
       const rolePolicy = resolveSupermemoryRolePolicy(request.role);
       const query = request.query.trim();
-      if (rolePolicy.search === "skip" || rolePolicy.maxResults <= 0) return skipped("search", "role_policy_skip", rolePolicy, startedAt, metric);
-      if (!query) return skipped("search", "empty_query", rolePolicy, startedAt, metric);
+      if (rolePolicy.search === "skip" || rolePolicy.maxResults <= 0) return skipped("search", "role_policy_skip", rolePolicy, startedAt, metric, request.dependency ?? "automatic", request.correlation);
+      if (!query) return skipped("search", "empty_query", rolePolicy, startedAt, metric, request.dependency ?? "automatic", request.correlation);
       const queryMetadata = queryObservability(query);
       try {
-        emit({ operation: "search", status: "attempted", role: request.role, approximateInputTokens: countApproxTokens(query), ...queryMetadata, dependency: request.dependency ?? "automatic", startedAt });
+        emit({ operation: "search", status: "attempted", role: request.role, approximateInputTokens: countApproxTokens(query), ...queryMetadata, dependency: request.dependency ?? "automatic", ...correlationFields(request.correlation), startedAt });
         const response = await input.transport.search({
           q: query,
           containerTag: canonicalScope,
@@ -241,24 +278,32 @@ export function createSupermemoryRuntime(input: {
             approximateInputTokens: countApproxTokens(query),
             ...queryMetadata,
             approximateInjectedTokens: countApproxTokens(injectedText),
-            injectedByteCount: utf8ByteCount(injectedText),
+            ...injectedReceipt(injectedText),
             dependency: request.dependency ?? "automatic",
+            ...correlationFields(request.correlation),
             startedAt,
           }),
         };
       } catch (error) {
-        return failure("search", rolePolicy, startedAt, error, metric, request.dependency ?? "automatic");
+        return failure("search", rolePolicy, startedAt, error, metric, request.dependency ?? "automatic", request.correlation);
       }
     },
 
-    async capture(turn: { role: SupermemoryConversationRole; content: string; source: SupermemoryCaptureSource; capturedAt?: string; dependency?: SupermemoryRequestDependency; correlationId?: string }): Promise<SupermemoryCaptureResult> {
+    async capture(turn: { role: SupermemoryConversationRole; content: string; source: SupermemoryCaptureSource; capturedAt?: string; dependency?: SupermemoryRequestDependency; correlationId?: string; correlation?: SupermemoryRuntimeCorrelation }): Promise<SupermemoryCaptureResult> {
       const startedAt = now();
+      const dependency = turn.dependency ?? "automatic";
+      const baseCaptureMetric = {
+        captureSource: turn.source,
+        ...inputReceipt(captureReceiptCandidate(turn.content)),
+        dependency,
+        ...correlationFields(turn.correlation),
+      };
       if (!isCanonicalSupermemoryProjectScope(canonicalScope)) {
         return {
           ok: false,
           reason: "invalid_project_scope",
           diagnostics: ["Supermemory capture skipped because the canonical project scope is missing or invalid."],
-          metrics: metric({ operation: "capture", status: "skipped", reason: "invalid_project_scope", startedAt }),
+          metrics: metric({ operation: "capture", status: "skipped", reason: "invalid_project_scope", ...baseCaptureMetric, startedAt }),
         };
       }
       const rawEligibility = evaluateAdaptiveMemoryCaptureEligibility({ source: turn.source, content: turn.content });
@@ -267,7 +312,7 @@ export function createSupermemoryRuntime(input: {
           ok: false,
           reason: rawEligibility.reason,
           diagnostics: rawEligibility.diagnostics,
-          metrics: metric({ operation: "capture", status: "skipped", reason: rawEligibility.reason, dependency: turn.dependency ?? "automatic", startedAt }),
+          metrics: metric({ operation: "capture", status: "skipped", reason: rawEligibility.reason, ...baseCaptureMetric, startedAt }),
         };
       }
       const redacted = redactSupermemoryConversationContent(rawEligibility.content);
@@ -276,7 +321,7 @@ export function createSupermemoryRuntime(input: {
           ok: false,
           reason: "secret_or_empty_content",
           diagnostics: ["Supermemory capture skipped because content was empty or only redacted sensitive material."],
-          metrics: metric({ operation: "capture", status: "skipped", reason: "secret_or_empty_content", startedAt }),
+          metrics: metric({ operation: "capture", status: "skipped", reason: "secret_or_empty_content", ...baseCaptureMetric, startedAt }),
         };
       }
       const eligibility = evaluateAdaptiveMemoryCaptureEligibility({ source: turn.source, content: redacted.content });
@@ -285,24 +330,30 @@ export function createSupermemoryRuntime(input: {
           ok: false,
           reason: eligibility.reason,
           diagnostics: eligibility.diagnostics,
-          metrics: metric({ operation: "capture", status: "skipped", reason: eligibility.reason, dependency: turn.dependency ?? "automatic", startedAt }),
+          metrics: metric({ operation: "capture", status: "skipped", reason: eligibility.reason, ...baseCaptureMetric, startedAt }),
         };
       }
+      const finalCaptureMetric = {
+        captureSource: turn.source,
+        ...inputReceipt(eligibility.content),
+        dependency,
+        ...correlationFields(turn.correlation),
+      };
       const ingest = buildSupermemoryConversationIngest({
         canonicalScope,
         sessionId: input.sessionId,
-        turn: { ...turn, content: eligibility.content, source: turn.source, dependency: turn.dependency ?? "automatic", correlationId: turn.correlationId },
+        turn: { role: turn.role, content: eligibility.content, source: turn.source, capturedAt: turn.capturedAt, dependency },
       });
       if (!ingest.ok) {
         return {
           ok: false,
           reason: "invalid_capture_payload",
           diagnostics: ingest.diagnostics,
-          metrics: metric({ operation: "capture", status: "skipped", reason: "invalid_capture_payload", startedAt }),
+          metrics: metric({ operation: "capture", status: "skipped", reason: "invalid_capture_payload", ...finalCaptureMetric, startedAt }),
         };
       }
       try {
-        emit({ operation: "capture", status: "attempted", approximateInputTokens: countApproxTokens(eligibility.content), dependency: turn.dependency ?? "automatic", startedAt });
+        emit({ operation: "capture", status: "attempted", approximateInputTokens: countApproxTokens(eligibility.content), ...finalCaptureMetric, startedAt });
         await input.transport.add(ingest.request);
         return {
           ok: true,
@@ -311,7 +362,7 @@ export function createSupermemoryRuntime(input: {
             operation: "capture",
             status: "succeeded",
             approximateInputTokens: countApproxTokens(eligibility.content),
-            dependency: turn.dependency ?? "automatic",
+            ...finalCaptureMetric,
             startedAt,
           }),
         };
@@ -320,7 +371,7 @@ export function createSupermemoryRuntime(input: {
           ok: false,
           reason: "provider_error",
           diagnostics: [redactProviderError(error)],
-          metrics: metric({ operation: "capture", status: "failed", reason: "provider_error", dependency: turn.dependency ?? "automatic", startedAt }),
+          metrics: metric({ operation: "capture", status: "failed", reason: "provider_error", ...finalCaptureMetric, startedAt }),
         };
       }
     },
@@ -466,12 +517,14 @@ function skipped(
   rolePolicy: SupermemoryRolePolicy,
   startedAt: number,
   metric: (args: Omit<SupermemoryRuntimeMetric, "provider" | "durationMs" | "scopeFingerprint"> & { startedAt: number }) => SupermemoryRuntimeMetric,
+  dependency: SupermemoryRequestDependency,
+  correlation?: SupermemoryRuntimeCorrelation,
 ): SupermemoryRuntimeResult {
   return {
     ok: false,
     reason,
     diagnostics: [`Supermemory ${operation} skipped by role-aware policy.`],
-    metrics: metric({ operation, status: "skipped", reason, role: rolePolicy.role, startedAt }),
+    metrics: metric({ operation, status: "skipped", reason, role: rolePolicy.role, dependency, ...correlationFields(correlation), startedAt }),
   };
 }
 
@@ -482,12 +535,13 @@ function failure(
   error: unknown,
   metric: (args: Omit<SupermemoryRuntimeMetric, "provider" | "durationMs" | "scopeFingerprint"> & { startedAt: number }) => SupermemoryRuntimeMetric,
   dependency: SupermemoryRequestDependency,
+  correlation?: SupermemoryRuntimeCorrelation,
 ): SupermemoryRuntimeResult {
   return {
     ok: false,
     reason: "provider_error",
     diagnostics: [redactProviderError(error)],
-    metrics: metric({ operation, status: "failed", reason: "provider_error", role: rolePolicy.role, dependency, startedAt }),
+    metrics: metric({ operation, status: "failed", reason: "provider_error", role: rolePolicy.role, dependency, ...correlationFields(correlation), startedAt }),
   };
 }
 

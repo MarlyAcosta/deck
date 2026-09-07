@@ -16,6 +16,9 @@ describe("managed project memory recall query boundary", () => {
     "https://user:pass@example.test/repo.git",
     "Authorization: Bearer secret-token",
     "Cookie: session=secret-token",
+    '{"authorization":"Bearer secret-token"}',
+    '{"x-api-key":"secret-token"}',
+    '{"x-deck-api-key":"secret-token"}',
     "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
     "OPENAI_API_KEY=sk-secret-value",
     "--token fake-token-value",
@@ -32,6 +35,7 @@ describe("managed project memory recall query boundary", () => {
     for (const query of sensitive) {
       expect(parseManagedProjectMemoryRecallQuery(query)).toEqual({ ok: false, reason: "invalid-query" });
     }
+    expect(parseManagedProjectMemoryRecallQuery("prior convention for x-deck-api-key header names")).toEqual({ ok: true, query: "prior convention for x-deck-api-key header names" });
   });
 
   test("renders distinct bounded failure envelopes that are not adaptive-memory context", () => {

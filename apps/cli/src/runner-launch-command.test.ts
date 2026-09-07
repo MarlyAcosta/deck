@@ -911,7 +911,7 @@ describe("runRunnerLaunch consent and status", () => {
     }
   });
 
-  test("explicit remember captures once with correlation id and skips duplicate prompt capture", async () => {
+  test("explicit remember captures once without persisting correlation id and skips duplicate prompt capture", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "deck-runtime-explicit-remember-"));
     initGitRemote(projectRoot);
     const calls: Array<{ operation: string; payload: any }> = [];
@@ -937,7 +937,8 @@ describe("runRunnerLaunch consent and status", () => {
       expect(result.status).toBe("launched");
       const adds = calls.filter((call) => call.operation === "add").map((call) => call.payload);
       expect(adds).toHaveLength(1);
-      expect(adds[0]).toMatchObject({ metadata: { role: "user", source: "explicit-remember", dependency: "explicit-remember", correlationId: expect.stringMatching(/^explicit-remember-[a-f0-9]{16}$/) } });
+      expect(adds[0]).toMatchObject({ metadata: { role: "user", source: "explicit-remember", dependency: "explicit-remember" } });
+      expect(adds[0].metadata).not.toHaveProperty("correlationId");
       expect(adds[0].content).not.toMatch(/^Remember that/i);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
