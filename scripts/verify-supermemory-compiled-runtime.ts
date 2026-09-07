@@ -140,7 +140,9 @@ try {
       for (const required of ["/v3/documents", "/v4/profile", "/v4/search"]) {
         if (!realDeckPaths.includes(required)) throw new Error("extracted Deck runtime smoke missing endpoint " + required + " saw " + realDeckPaths.join(","));
       }
-      if (!realDeckCalls.some((call) => call.path === "/v3/documents" && call.body?.metadata?.correlationId === "compiled-deck-explicit-remember")) throw new Error("extracted Deck runtime smoke did not exercise capture correlation contract");
+      const realDeckCapture = realDeckCalls.find((call) => call.path === "/v3/documents" && call.body?.metadata?.source === "explicit-remember");
+      if (!realDeckCapture) throw new Error("extracted Deck runtime smoke did not exercise explicit remember capture contract");
+      if (JSON.stringify(realDeckCapture).includes("compiled-deck-explicit-remember") || realDeckCapture.body?.metadata?.correlationId !== undefined) throw new Error("extracted Deck runtime smoke persisted a transport correlation identifier");
       console.log("compiled-deck-runtime-operations ok (extracted release archive, mock endpoint, credential-free MCP materialization, authenticated loopback capture)");
 
       const hookCalls: any[] = [];

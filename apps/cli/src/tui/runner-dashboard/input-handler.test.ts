@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PiRunnerCapabilityInventory } from "@deck/adapter-pi";
+import { buildOpenCodeRunnerReviewPlan } from "@deck/adapter-opencode";
 import { reduce } from "./reducer";
 import {
   getPiRunnerDashboardContinueEffect,
@@ -47,7 +48,7 @@ describe("Pi Runner dashboard input mapping", () => {
       };
       const state = createDefaultPiRunnerDashboardState({ runnerScope: runnerId, screen: "packages-detail" });
       expect(getToggleablePackageInstructionIds(state, resolver)).toEqual([...expected]);
-      expect(getDashboardSectionSummaries(state, resolver)[0]).toMatchObject({ totalCount: 5, selectedCount: 0 });
+      expect(getDashboardSectionSummaries(state, resolver)[0]).toMatchObject({ totalCount: 5, selectedCount: 3 });
     }
   });
 
@@ -56,7 +57,11 @@ describe("Pi Runner dashboard input mapping", () => {
     const resolver: CapabilityResolver = {
       getSupportedPackageInstructionIds: () => adapter.packageInstructionIds ?? [],
     };
-    let state = createDefaultPiRunnerDashboardState({ screen: "packages-detail", cursor: 0 });
+    let state = createDefaultPiRunnerDashboardState({
+      screen: "packages-detail",
+      cursor: 0,
+      packageInstructions: { "codebase-memory": false },
+    });
     const selectedBefore = state.selectedCapabilities["codebase-memory"];
     const action = getPiRunnerDashboardToggleAction(state, resolver);
     expect(action).toEqual({ type: "toggle-package-instruction", packageId: "codebase-memory" });
@@ -64,6 +69,91 @@ describe("Pi Runner dashboard input mapping", () => {
     state = reduce(state, action!);
     expect(state.packageInstructions["codebase-memory"]).toBe(true);
     expect(state.selectedCapabilities["codebase-memory"]).toBe(selectedBefore);
+  });
+
+  test("a current-operation Serena package toggle explicitly selects it for installation", () => {
+    const adapter = getAdapter("opencode");
+    const resolver: CapabilityResolver = {
+      getSupportedPackageInstructionIds: () => adapter.packageInstructionIds ?? [],
+    };
+    const operation = {
+      runner: "opencode" as const,
+      operationId: "opencode-serena-package-selection",
+      explicitlySelected: false,
+    };
+    let state = createDefaultPiRunnerDashboardState({
+      runnerScope: "opencode",
+      screen: "packages-detail",
+      cursor: 4,
+      operationId: operation.operationId,
+      currentOperation: operation,
+      selectedCapabilities: { serena: false },
+      packageInstructions: { serena: false },
+    });
+
+    const selectAction = getPiRunnerDashboardToggleAction(state, resolver);
+    expect(selectAction).toBeDefined();
+    state = reduce(state, selectAction!);
+
+    expect(state.packageInstructions.serena).toBe(true);
+    expect(state.selectedCapabilities.serena).toBe(true);
+    expect(state.explicitlySelectedCapabilities.serena).toBe(true);
+    expect(state.currentOperation).toEqual({ ...operation, explicitlySelected: true });
+
+    const plan = buildOpenCodeRunnerReviewPlan({
+      runnerScope: state.runnerScope,
+      operationId: state.operationId,
+      currentOperation: { ...operation, explicitlySelected: true },
+      selectedCapabilities: { serena: state.selectedCapabilities.serena === true },
+      explicitlySelectedCapabilities: { serena: state.explicitlySelectedCapabilities.serena === true },
+    }, {
+      serena: {
+        capabilityId: "serena",
+        status: "missing",
+        runnerScope: "opencode",
+        installed: false,
+        toolId: "serena",
+        source: "serena-agent",
+        diagnostics: [],
+      },
+    });
+    expect(plan.groups.automaticInstalls).toContainEqual(expect.objectContaining({
+      id: "capability.serena.install",
+      source: "serena-agent",
+    }));
+
+    const clearAction = getPiRunnerDashboardToggleAction(state, resolver);
+    expect(clearAction).toBeDefined();
+    state = reduce(state, clearAction!);
+
+    expect(state.packageInstructions.serena).toBe(false);
+    expect(state.selectedCapabilities.serena).toBe(false);
+    expect(state.explicitlySelectedCapabilities.serena).toBeUndefined();
+    expect(state.currentOperation).toEqual(operation);
+  });
+
+  test("a Serena package toggle without a current operation cannot authorize installation", () => {
+    const adapter = getAdapter("opencode");
+    const resolver: CapabilityResolver = {
+      getSupportedPackageInstructionIds: () => adapter.packageInstructionIds ?? [],
+    };
+    let state = createDefaultPiRunnerDashboardState({
+      runnerScope: "opencode",
+      screen: "packages-detail",
+      cursor: 4,
+      operationId: undefined,
+      currentOperation: undefined,
+      selectedCapabilities: { serena: false },
+      packageInstructions: { serena: false },
+    });
+
+    const action = getPiRunnerDashboardToggleAction(state, resolver);
+    expect(action).toBeDefined();
+    state = reduce(state, action!);
+
+    expect(state.packageInstructions.serena).toBe(true);
+    expect(state.explicitlySelectedCapabilities.serena).toBeUndefined();
+    expect(state.currentOperation).toBeUndefined();
   });
 
   test("Web Search opens masked credential setup only when enablement lacks a credential", () => {

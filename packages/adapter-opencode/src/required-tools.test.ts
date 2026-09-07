@@ -5,6 +5,7 @@ import {
   resolveOpenCodeInstalledEvidence,
   type OpenCodeEvidenceContext,
 } from "./required-tools";
+import { buildOpenCodeInstallationPlan } from "./installation-plan";
 
 function contextFor(options: {
   env?: Record<string, string | undefined>;
@@ -134,6 +135,55 @@ describe("reviewOpenCodeTools", () => {
     });
     expect(review.tools.find((tool) => tool.name === "codebase-memory")?.installed).toBe(true);
     expect(review.evidence?.["codebase-memory"]).toEqual(evidence);
+  });
+
+  test("does not treat bare npx PATH availability as installed Context7", () => {
+    const context = contextFor({
+      env: { PATH: "/tmp/bin" },
+      executableFiles: ["/tmp/bin/npx"],
+    });
+
+    const evidence = resolveOpenCodeInstalledEvidence("context7", context);
+    expect(evidence.state).toBe("absent");
+    expect(evidence.source).toBe("absent");
+    expect(evidence.reasonCodes).not.toContain("PATH-usable");
+
+    const review = reviewOpenCodeTools({
+      evidenceContext: context,
+      packageManifest: "/missing/package.json",
+      configPath: "/missing/opencode.json",
+      pathExists: () => false,
+    });
+    expect(review.tools.find((tool) => tool.name === "Context7")?.installed).toBe(false);
+    expect(review.evidence?.context7?.state).toBe("absent");
+    expect(buildOpenCodeInstallationPlan({
+      tools: review.tools,
+      selectedToolIds: ["context7"],
+    })).toContainEqual(expect.objectContaining({ id: "context7", installKind: "mcp-server" }));
+  });
+
+  test("accepts a valid configured Context7 MCP command when npx is executable", () => {
+    const context = contextFor({
+      env: { PATH: "/tmp/bin" },
+      files: {
+        "/project/opencode.json": JSON.stringify({
+          mcp: {
+            context7: {
+              type: "local",
+              command: ["npx", "-y", "@upstash/context7-mcp"],
+            },
+          },
+        }),
+      },
+      executableFiles: ["/tmp/bin/npx"],
+    });
+
+    expect(resolveOpenCodeInstalledEvidence("context7", context)).toEqual({
+      toolId: "context7",
+      state: "usable",
+      source: "configured",
+      reasonCodes: ["configured-usable"],
+    });
   });
 
   test("uses the effective JSONC config command only when its target is executable", () => {

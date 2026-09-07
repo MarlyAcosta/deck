@@ -498,7 +498,7 @@ function aliasesFor(toolId: InstallableOpenCodeToolId, tool: InstallableOpenCode
 }
 
 function commandForTool(toolId: InstallableOpenCodeToolId, tool: InstallableOpenCodeTool | undefined = TOOL_BY_ID.get(toolId)): string | undefined {
-  return toolId === "context7" ? "npx" : getUserFacingOpenCodeCapability(toolId)?.detector.commands?.[0] ?? tool?.id;
+  return toolId === "context7" ? "@upstash/context7-mcp" : getUserFacingOpenCodeCapability(toolId)?.detector.commands?.[0] ?? tool?.id;
 }
 
 function isExactCommandToken(token: string, expected: string, context: OpenCodeEvidenceContext): boolean {

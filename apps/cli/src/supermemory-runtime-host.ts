@@ -6,6 +6,7 @@ import {
   createSupermemoryHttpTransport,
   type SupermemoryRenderedContext,
   type SupermemoryRequestDependency,
+  type SupermemoryRuntimeCorrelation,
   type SupermemoryRuntimeMetric,
   type SupermemoryRuntimeRole,
   type SupermemoryRuntimeTransport,
@@ -20,7 +21,9 @@ import {
   type NormalizedDeckConfig,
   type RunnerLaunchInput,
 } from "@deck/core";
+import { createAdaptiveMemoryContentReceipt, deriveAdaptiveMemoryLogicalTurnFingerprint, deriveAdaptiveMemorySessionFingerprint } from "@deck/core/memory/adaptive-memory-observability-receipts";
 import { createSupermemoryObservabilitySink, type SupermemoryObservabilitySink } from "./supermemory-observability";
+import { getCachedRuntimeExecutableReceipt, type RuntimeExecutableReceipt, type RuntimeExecutableReceiptResolver } from "./runtime-executable-receipt";
 import { createFreshDeckSessionId, persistNativeDeckRuntimeSessionMapping } from "./supermemory-session-store";
 
 export type SupermemoryRuntimeProcessOutcome = Readonly<{
@@ -93,6 +96,8 @@ export type CreateSupermemoryRuntimeHostInput = Readonly<{
   canonicalScope?: string;
   stateHome?: string;
   deferInitialRecallToLoopback?: boolean;
+  hostExecutableReceipt?: RuntimeExecutableReceipt;
+  runtimeExecutableReceiptResolver?: RuntimeExecutableReceiptResolver;
 }>;
 
 export async function createSupermemoryRuntimeHost(input: CreateSupermemoryRuntimeHostInput): Promise<SupermemoryRuntimeHost> {
@@ -102,41 +107,60 @@ export async function createSupermemoryRuntimeHost(input: CreateSupermemoryRunti
   const metrics: SupermemoryRuntimeMetric[] = [];
   const launchMode = input.launchMode ?? "exec";
   let sink: SupermemoryObservabilitySink | undefined;
+  let hostExecutableReceipt = input.hostExecutableReceipt;
+  let hostExecutableReceiptResolved = input.hostExecutableReceipt !== undefined;
   const ensureSink = (): SupermemoryObservabilitySink => {
     if (sink) return sink;
     sink = input.observabilitySink ?? createSupermemoryObservabilitySink({ stateHome: input.stateHome });
     if (!sink.healthy) diagnostics.push({ code: "supermemory-runtime-observability-degraded", severity: "warning", message: "Supermemory observability sink is unavailable; runtime remains fail-open." });
     return sink;
   };
-  const recordObservabilityDiagnostic = (message: string) => {
-    const redacted = redactSecretDiagnostic(message);
-    if (!diagnostics.some((diagnostic) => diagnostic.code === "supermemory-runtime-observability-degraded" && diagnostic.message.includes(redacted))) {
-      diagnostics.push({ code: "supermemory-runtime-observability-degraded", severity: "warning", message: `Supermemory observability failed open; metrics may be incomplete. ${redacted}` });
+  const resolveHostExecutableReceipt = (): RuntimeExecutableReceipt | undefined => {
+    if (hostExecutableReceiptResolved) return hostExecutableReceipt;
+    hostExecutableReceiptResolved = true;
+    const resolved = (input.runtimeExecutableReceiptResolver ?? getCachedRuntimeExecutableReceipt)();
+    if (resolved.ok) {
+      hostExecutableReceipt = resolved.receipt;
+      return hostExecutableReceipt;
+    }
+    diagnostics.push({ code: "supermemory-runtime-observability-degraded", severity: "warning", message: resolved.diagnostics.join(" ") });
+    return undefined;
+  };
+  const enrichMetric = (metric: SupermemoryRuntimeMetric): SupermemoryRuntimeMetric => {
+    const receipt = resolveHostExecutableReceipt();
+    return receipt ? { ...metric, ...receipt } : metric;
+  };
+  const recordObservabilityDiagnostic = (reason: "sink-write" | "sink-health" | "sink-unavailable" | "observer-callback") => {
+    const message = `Supermemory observability failed open; metrics may be incomplete. reason=${reason}.`;
+    if (!diagnostics.some((diagnostic) => diagnostic.code === "supermemory-runtime-observability-degraded" && diagnostic.message === message)) {
+      diagnostics.push({ code: "supermemory-runtime-observability-degraded", severity: "warning", message });
     }
   };
-  const observe = (metric: SupermemoryRuntimeMetric) => {
-    metrics.push(metric);
+  const observe = (metric: SupermemoryRuntimeMetric): SupermemoryRuntimeMetric => {
+    const observedMetric = enrichMetric(metric);
+    metrics.push(observedMetric);
     try {
       const activeSink = ensureSink();
       try {
-        activeSink.observe(metric);
-      } catch (error) {
-        recordObservabilityDiagnostic(error instanceof Error ? error.message : String(error));
+        activeSink.observe(observedMetric);
+      } catch {
+        recordObservabilityDiagnostic("sink-write");
       }
       try {
         const sinkHealth = activeSink.health();
-        if (!sinkHealth.healthy) recordObservabilityDiagnostic(sinkHealth.diagnostics.join(" "));
-      } catch (error) {
-        recordObservabilityDiagnostic(error instanceof Error ? error.message : String(error));
+        if (!sinkHealth.healthy) recordObservabilityDiagnostic("sink-health");
+      } catch {
+        recordObservabilityDiagnostic("sink-health");
       }
-    } catch (error) {
-      recordObservabilityDiagnostic(error instanceof Error ? error.message : String(error));
+    } catch {
+      recordObservabilityDiagnostic("sink-unavailable");
     }
     try {
-      input.observe?.(metric);
-    } catch (error) {
-      recordObservabilityDiagnostic(error instanceof Error ? error.message : String(error));
+      input.observe?.(observedMetric);
+    } catch {
+      recordObservabilityDiagnostic("observer-callback");
     }
+    return observedMetric;
   };
 
   const disabled = (): SupermemoryRuntimeHost => ({
@@ -181,6 +205,7 @@ export async function createSupermemoryRuntimeHost(input: CreateSupermemoryRunti
     const transport = input.transport ?? createSupermemoryHttpTransport({ apiKey: apiKey!, timeoutMs: 8_000 });
     const runtime = createSupermemoryRuntime({ canonicalScope: scope.scope, sessionId, transport, runnerId: input.runnerId, observe });
     const scopeFingerprint = fingerprintSupermemoryProjectScope(scope.scope);
+    const directAutomaticCorrelation = hostDerivedAutomaticCorrelation(scopeFingerprint, sessionId);
     const recordLifecycle = (event: "identity-resolved" | "runtime-started" | "runtime-cleanup", status: "attempted" | "skipped" | "succeeded" | "failed" = "succeeded", reason?: string) => {
       observe(runtimeLifecycleMetric({ runnerId: input.runnerId, role, scopeFingerprint, event, status, reason }));
     };
@@ -252,15 +277,16 @@ export async function createSupermemoryRuntimeHost(input: CreateSupermemoryRunti
           dependency: "automatic",
           content: launch.prompt.join("\n"),
           capturedAt: new Date().toISOString(),
+          correlation: directAutomaticCorrelation,
         });
-        observe(capture.metrics);
+        const observedMetric = observe(capture.metrics);
         if (!capture.ok) {
           return {
             diagnostics: [{ code: "supermemory-runtime-capture-failed", severity: "warning", message: redactSecretDiagnostic(capture.diagnostics.join(" ")) }],
-            metrics: [capture.metrics],
+            metrics: [observedMetric],
           };
         }
-        return { diagnostics: [], metrics: [capture.metrics] };
+        return { diagnostics: [], metrics: [observedMetric] };
       },
       async captureOutcome(outcome) {
         if (!outcome.finalAssistantMessage?.trim()) {
@@ -275,15 +301,16 @@ export async function createSupermemoryRuntimeHost(input: CreateSupermemoryRunti
           dependency: "automatic",
           content: outcome.finalAssistantMessage,
           capturedAt: new Date().toISOString(),
+          correlation: directAutomaticCorrelation,
         });
-        observe(capture.metrics);
+        const observedMetric = observe(capture.metrics);
         if (!capture.ok) {
           return {
             diagnostics: [{ code: "supermemory-runtime-capture-failed", severity: "warning", message: redactSecretDiagnostic(capture.diagnostics.join(" ")) }],
-            metrics: [capture.metrics],
+            metrics: [observedMetric],
           };
         }
-        return { diagnostics: [], metrics: [capture.metrics] };
+        return { diagnostics: [], metrics: [observedMetric] };
       },
       async explicitRecall(query) {
         const normalizedQuery = parseManagedProjectMemoryRecallQuery(query);
@@ -294,9 +321,9 @@ export async function createSupermemoryRuntimeHost(input: CreateSupermemoryRunti
       },
       async explicitRemember(content, options) {
         const capture = await runtime.capture({ role: "user", source: "explicit-remember", dependency: "explicit-remember", content, correlationId: options?.correlationId, capturedAt: new Date().toISOString() });
-        observe(capture.metrics);
-        if (!capture.ok) return { ok: false, diagnostics: [{ code: "supermemory-runtime-capture-failed", severity: "error", message: redactSecretDiagnostic(capture.diagnostics.join(" ")) }], metrics: [capture.metrics] };
-        return { ok: true, diagnostics: [], metrics: [capture.metrics] };
+        const observedMetric = observe(capture.metrics);
+        if (!capture.ok) return { ok: false, diagnostics: [{ code: "supermemory-runtime-capture-failed", severity: "error", message: redactSecretDiagnostic(capture.diagnostics.join(" ")) }], metrics: [observedMetric] };
+        return { ok: true, diagnostics: [], metrics: [observedMetric] };
       },
       recordLifecycle,
       async startLoopbackBridge() {
@@ -331,6 +358,11 @@ type RunnerLoopbackEvent = Readonly<{
   sessionId?: unknown;
   role?: unknown;
   query?: unknown;
+  messageId?: unknown;
+  logicalTurnId?: unknown;
+  snapshotGeneration?: unknown;
+  injectedByteCount?: unknown;
+  injectedSha256?: unknown;
   content?: unknown;
   source?: unknown;
   correlationId?: unknown;
@@ -340,8 +372,33 @@ type RunnerLoopbackEvent = Readonly<{
 
 type SupermemoryRuntimeInstance = ReturnType<typeof createSupermemoryRuntime>;
 type LoopbackReplayEntry = Readonly<{ timestamp: number; response: Record<string, unknown> }>;
+type LoopbackMetricCorrelation = SupermemoryRuntimeCorrelation & Readonly<{
+  nativeSessionId: string;
+  logicalTurnId?: string;
+}>;
+type ExpectedInjectionReceipt = Readonly<{
+  timestamp: number;
+  nativeSessionId: string;
+  logicalTurnId: string;
+  sessionFingerprint: string;
+  logicalTurnFingerprint: string;
+  snapshotGeneration: number;
+  injectedByteCount: number;
+  injectedSha256: string;
+}>;
+type ExpectedInjectionStore = Readonly<{
+  remember(receipt: Omit<ExpectedInjectionReceipt, "timestamp">): void;
+  acknowledge(input: { nativeSessionId: string; logicalTurnId: string; snapshotGeneration: number; injectedByteCount: number; injectedSha256: string }): ExpectedInjectionReceipt | undefined;
+  clearSession(nativeSessionId: string): void;
+  retireSession(nativeSessionId: string): void;
+  clear(): void;
+  close(): void;
+}>;
 const LOOPBACK_REPLAY_TTL_MS = 5 * 60_000;
 const LOOPBACK_REPLAY_CAP = 64;
+const EXPECTED_INJECTION_TTL_MS = 5 * 60_000;
+const EXPECTED_INJECTION_CAP = 128;
+const EXPECTED_INJECTION_RETIRED_SESSION_CAP = 128;
 
 function startSupermemoryRunnerLoopbackBridge(input: {
   runnerId: string;
@@ -360,6 +417,7 @@ function startSupermemoryRunnerLoopbackBridge(input: {
   const rolesBySession = new Map<string, SupermemoryRuntimeRole>([[input.sessionId, input.role]]);
   const successfulEvents = new Map<string, LoopbackReplayEntry>();
   const inFlightEvents = new Map<string, Promise<Record<string, unknown>>>();
+  const expectedInjections = createExpectedInjectionStore();
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -370,7 +428,7 @@ function startSupermemoryRunnerLoopbackBridge(input: {
       if (!sameBearer(request.headers.get("authorization") ?? "", expected)) return jsonResponse(401, { ok: false, diagnostics: ["unauthorized"] });
       const length = Number(request.headers.get("content-length") ?? "0");
       if (Number.isFinite(length) && length > 256 * 1024) return jsonResponse(413, { ok: false, diagnostics: ["payload-too-large"] });
-      const task = handleLoopbackRequest(await request.text(), input, rolesBySession, successfulEvents, inFlightEvents);
+      const task = handleLoopbackRequest(await request.text(), { ...input, expectedInjections }, rolesBySession, successfulEvents, inFlightEvents);
       inFlight.add(task);
       try {
         return jsonResponse(200, await task);
@@ -401,6 +459,7 @@ function startSupermemoryRunnerLoopbackBridge(input: {
         ]);
         if (timedOut) diagnostics.push({ code: "supermemory-runtime-cleanup-failed", severity: "warning", message: "Supermemory loopback cleanup timed out while draining in-flight runner events; cleanup continued." });
       } finally {
+        expectedInjections.close();
         server.stop(true);
       }
       return { diagnostics, metrics };
@@ -410,7 +469,7 @@ function startSupermemoryRunnerLoopbackBridge(input: {
 
 async function handleLoopbackRequest(
   body: string,
-  host: { runnerId: string; projectRoot: string; teamId: string; sessionId: string; role: SupermemoryRuntimeRole; runtime: SupermemoryRuntimeInstance; observe(metric: SupermemoryRuntimeMetric): void; scopeFingerprint: string; stateHome?: string },
+  host: { runnerId: string; projectRoot: string; teamId: string; sessionId: string; role: SupermemoryRuntimeRole; runtime: SupermemoryRuntimeInstance; observe(metric: SupermemoryRuntimeMetric): void; scopeFingerprint: string; stateHome?: string; expectedInjections: ExpectedInjectionStore },
   rolesBySession: Map<string, SupermemoryRuntimeRole>,
   successfulEvents: Map<string, LoopbackReplayEntry>,
   inFlightEvents: Map<string, Promise<Record<string, unknown>>> = new Map(),
@@ -422,6 +481,9 @@ async function handleLoopbackRequest(
   const eventId = typeof event.eventId === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(event.eventId) ? event.eventId : undefined;
   const timestamp = typeof event.timestamp === "number" && Number.isFinite(event.timestamp) ? event.timestamp : undefined;
   if (!eventId || timestamp === undefined || Math.abs(Date.now() - timestamp) > 5 * 60_000) return { ok: false, diagnostics: ["invalid-event-id"] };
+  const sessionId = validEphemeralId(event.sessionId);
+  if (!sessionId) return { ok: false, diagnostics: ["invalid-session-id"] };
+  if (requiresOpenCodeAutomaticTurnCorrelation(host.runnerId, event) && !hasValidTurnCorrelation(event)) return { ok: false, diagnostics: ["invalid-turn-correlation"] };
   pruneReplay(successfulEvents, Date.now());
   const replay = successfulEvents.get(eventId);
   if (replay) return replay.response;
@@ -430,12 +492,12 @@ async function handleLoopbackRequest(
   if (inFlightEvents.size >= 512) return { ok: false, diagnostics: ["in-flight-overflow"] };
 
   const task = (async (): Promise<Record<string, unknown>> => {
-    const sessionId = typeof event.sessionId === "string" && /^[^\0\r\n]{1,160}$/.test(event.sessionId) ? event.sessionId : host.sessionId;
     const role = parseRuntimeRole(event.role) ?? rolesBySession.get(sessionId) ?? host.role;
+    const correlation = loopbackMetricCorrelation(host.scopeFingerprint, sessionId, event);
     if (event.event === "session_start" || event.event === "role_start") {
       rolesBySession.set(sessionId, role);
       if (event.event === "session_start") persistNativeDeckRuntimeSessionMapping({ projectRoot: host.projectRoot, teamId: host.teamId, runnerId: host.runnerId, nativeSessionId: sessionId, deckSessionId: host.sessionId, stateHome: host.stateHome });
-      const recalled = await recallForLoopback(host, role, typeof event.query === "string" ? event.query : undefined);
+      const recalled = await recallForLoopback(host, role, typeof event.query === "string" ? event.query : undefined, "automatic", correlation);
       if (recalled.ok !== false) successfulEvents.set(eventId, { timestamp: Date.now(), response: recalled });
       return recalled;
     }
@@ -450,9 +512,24 @@ async function handleLoopbackRequest(
         recallRole = "lead";
         dependency = "explicit-recall";
       }
-      const recalled = await recallForLoopback(host, recallRole, query, dependency);
+      const recalled = await recallForLoopback(host, recallRole, query, dependency, correlation);
       if (recalled.ok !== false) successfulEvents.set(eventId, { timestamp: Date.now(), response: recalled });
       return recalled;
+    }
+    if (event.event === "injection_ack") {
+      const acknowledgment = validateInjectionAck(sessionId, event);
+      if (!acknowledgment) return { ok: false, diagnostics: ["invalid-injection-ack"] };
+      const matched = host.expectedInjections.acknowledge(acknowledgment);
+      if (!matched) return { ok: false, diagnostics: ["unmatched-injection-ack"] };
+      host.observe(runtimeInjectionMetric({
+        runnerId: host.runnerId,
+        role,
+        scopeFingerprint: host.scopeFingerprint,
+        receipt: matched,
+      }));
+      const response = { ok: true, diagnostics: [] };
+      successfulEvents.set(eventId, { timestamp: Date.now(), response });
+      return response;
     }
     if (event.event === "capture" || event.event === "explicit_remember") {
       if (typeof event.content !== "string" || event.content.length > 64 * 1024) return { ok: false, diagnostics: ["invalid-content"] };
@@ -463,6 +540,7 @@ async function handleLoopbackRequest(
         dependency: event.event === "explicit_remember" ? "explicit-remember" : "automatic",
         content: event.content,
         correlationId: typeof event.correlationId === "string" ? event.correlationId : undefined,
+        correlation,
         capturedAt: new Date().toISOString(),
       });
       host.observe(capture.metrics);
@@ -472,6 +550,7 @@ async function handleLoopbackRequest(
     }
     if (event.event === "shutdown_flush") {
       rolesBySession.delete(sessionId);
+      host.expectedInjections.retireSession(sessionId);
       const response = { ok: true, diagnostics: [] };
       successfulEvents.set(eventId, { timestamp: Date.now(), response });
       return response;
@@ -491,6 +570,7 @@ function runtimeRecallAttemptMetric(input: {
   role: SupermemoryRuntimeRole;
   scopeFingerprint: string;
   dependency: SupermemoryRequestDependency;
+  correlation?: SupermemoryRuntimeCorrelation;
 }): SupermemoryRuntimeMetric {
   return {
     provider: "supermemory",
@@ -502,6 +582,7 @@ function runtimeRecallAttemptMetric(input: {
     role: input.role,
     scopeFingerprint: input.scopeFingerprint,
     dependency: input.dependency,
+    ...metricCorrelationFields(input.correlation),
   };
 }
 
@@ -512,10 +593,12 @@ function runtimeRecallTerminalMetric(input: {
   diagnostics: readonly string[];
   startedAt: number;
   dependency: SupermemoryRequestDependency;
+  correlation?: SupermemoryRuntimeCorrelation;
 }): SupermemoryRuntimeMetric {
   const skippedByPolicy = input.operationMetrics.every((metric) => metric.status === "skipped" && metric.reason === "role_policy_skip");
   const failed = input.diagnostics.length > 0 && input.contexts.length === 0 && !skippedByPolicy;
   const advisoryText = renderAdvisoryContext(input.contexts) ?? "";
+  const receipt = createAdaptiveMemoryContentReceipt(advisoryText);
   return {
     ...input.basis,
     operation: "runtime_recall",
@@ -524,9 +607,35 @@ function runtimeRecallTerminalMetric(input: {
     reason: skippedByPolicy ? "role_policy_skip" : failed ? "provider_error" : undefined,
     durationMs: Date.now() - input.startedAt,
     approximateInjectedTokens: conservativeTokenCount(advisoryText),
-    injectedByteCount: new TextEncoder().encode(advisoryText).byteLength,
+    injectedByteCount: receipt.byteCount,
+    injectedSha256: receipt.sha256,
     resultCount: input.contexts.reduce((sum, context) => sum + context.items.length, 0),
     dependency: input.dependency,
+    ...metricCorrelationFields(input.correlation),
+  };
+}
+
+function runtimeInjectionMetric(input: {
+  runnerId?: string;
+  role: SupermemoryRuntimeRole;
+  scopeFingerprint: string;
+  receipt: ExpectedInjectionReceipt;
+}): SupermemoryRuntimeMetric {
+  return {
+    provider: "supermemory",
+    operation: "runtime_injection",
+    channel: "system-transform",
+    status: "succeeded",
+    durationMs: 0,
+    runnerId: input.runnerId,
+    role: input.role,
+    scopeFingerprint: input.scopeFingerprint,
+    sessionFingerprint: input.receipt.sessionFingerprint,
+    logicalTurnFingerprint: input.receipt.logicalTurnFingerprint,
+    snapshotGeneration: input.receipt.snapshotGeneration,
+    injectedByteCount: input.receipt.injectedByteCount,
+    injectedSha256: input.receipt.injectedSha256,
+    dependency: "automatic",
   };
 }
 
@@ -565,11 +674,143 @@ function hasRunnerSuppliedScopeField(event: Record<string, unknown>): boolean {
   return visit(event);
 }
 
+function metricCorrelationFields(correlation: SupermemoryRuntimeCorrelation | undefined): SupermemoryRuntimeCorrelation {
+  return {
+    ...(correlation?.sessionFingerprint ? { sessionFingerprint: correlation.sessionFingerprint } : {}),
+    ...(correlation?.logicalTurnFingerprint ? { logicalTurnFingerprint: correlation.logicalTurnFingerprint } : {}),
+    ...(correlation?.snapshotGeneration !== undefined ? { snapshotGeneration: correlation.snapshotGeneration } : {}),
+  };
+}
+
+function validEphemeralId(value: unknown): string | undefined {
+  return typeof value === "string" && /^[^\0\r\n]{1,160}$/.test(value) ? value : undefined;
+}
+
+function validSnapshotGeneration(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+function validSha256(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value) ? value : undefined;
+}
+
+function hasValidTurnCorrelation(event: RunnerLoopbackEvent): boolean {
+  return Boolean((validEphemeralId(event.logicalTurnId) ?? validEphemeralId(event.messageId)) && validSnapshotGeneration(event.snapshotGeneration) !== undefined);
+}
+
+function requiresOpenCodeAutomaticTurnCorrelation(runnerId: string, event: RunnerLoopbackEvent): boolean {
+  return runnerId === "opencode" && (event.event === "session_start" || event.event === "role_start" || event.event === "recall" || event.event === "capture");
+}
+
+function loopbackMetricCorrelation(scopeFingerprint: string, nativeSessionId: string, event: RunnerLoopbackEvent): LoopbackMetricCorrelation {
+  const logicalTurnId = validEphemeralId(event.logicalTurnId) ?? validEphemeralId(event.messageId);
+  const snapshotGeneration = validSnapshotGeneration(event.snapshotGeneration);
+  const sessionFingerprint = deriveAdaptiveMemorySessionFingerprint({ scopeFingerprint, nativeSessionId });
+  return {
+    nativeSessionId,
+    sessionFingerprint,
+    ...(logicalTurnId ? {
+      logicalTurnId,
+      logicalTurnFingerprint: deriveAdaptiveMemoryLogicalTurnFingerprint({ scopeFingerprint, nativeSessionId, logicalTurnId }),
+    } : {}),
+    ...(snapshotGeneration !== undefined ? { snapshotGeneration } : {}),
+  };
+}
+
+function hostDerivedAutomaticCorrelation(scopeFingerprint: string, deckSessionId: string): SupermemoryRuntimeCorrelation {
+  const logicalTurnId = "deck-host-direct-logical-turn-v1";
+  return {
+    sessionFingerprint: deriveAdaptiveMemorySessionFingerprint({ scopeFingerprint, nativeSessionId: deckSessionId }),
+    logicalTurnFingerprint: deriveAdaptiveMemoryLogicalTurnFingerprint({ scopeFingerprint, nativeSessionId: deckSessionId, logicalTurnId }),
+    snapshotGeneration: 1,
+  };
+}
+
+function validateInjectionAck(nativeSessionId: string, event: RunnerLoopbackEvent): { nativeSessionId: string; logicalTurnId: string; snapshotGeneration: number; injectedByteCount: number; injectedSha256: string } | undefined {
+  const logicalTurnId = validEphemeralId(event.logicalTurnId) ?? validEphemeralId(event.messageId);
+  const snapshotGeneration = validSnapshotGeneration(event.snapshotGeneration);
+  const injectedByteCount = typeof event.injectedByteCount === "number" && Number.isSafeInteger(event.injectedByteCount) && event.injectedByteCount >= 0 ? event.injectedByteCount : undefined;
+  const injectedSha256 = validSha256(event.injectedSha256);
+  if (!logicalTurnId || snapshotGeneration === undefined || injectedByteCount === undefined || !injectedSha256) return undefined;
+  return { nativeSessionId, logicalTurnId, snapshotGeneration, injectedByteCount, injectedSha256 };
+}
+
+function createExpectedInjectionStore(now: () => number = () => Date.now()): ExpectedInjectionStore {
+  const receipts = new Map<string, ExpectedInjectionReceipt>();
+  const retiredSessions = new Map<string, number>();
+  let closed = false;
+  const key = (receipt: { nativeSessionId: string; logicalTurnId: string; snapshotGeneration: number }) => JSON.stringify([receipt.nativeSessionId, receipt.logicalTurnId, receipt.snapshotGeneration]);
+  const prune = () => {
+    const current = now();
+    for (const [id, receipt] of receipts) if (current - receipt.timestamp >= EXPECTED_INJECTION_TTL_MS) receipts.delete(id);
+    for (const [nativeSessionId, timestamp] of retiredSessions) if (current - timestamp >= EXPECTED_INJECTION_TTL_MS) retiredSessions.delete(nativeSessionId);
+    while (receipts.size > EXPECTED_INJECTION_CAP) {
+      let oldestKey: string | undefined;
+      let oldestTimestamp = Number.POSITIVE_INFINITY;
+      for (const [id, receipt] of receipts) {
+        if (receipt.timestamp < oldestTimestamp) {
+          oldestKey = id;
+          oldestTimestamp = receipt.timestamp;
+        }
+      }
+      if (!oldestKey) break;
+      receipts.delete(oldestKey);
+    }
+    while (retiredSessions.size > EXPECTED_INJECTION_RETIRED_SESSION_CAP) {
+      const oldest = retiredSessions.keys().next().value;
+      if (oldest === undefined) break;
+      retiredSessions.delete(oldest);
+    }
+  };
+  return Object.freeze({
+    remember(receipt) {
+      prune();
+      if (closed || retiredSessions.has(receipt.nativeSessionId)) return;
+      const nextKey = key(receipt);
+      let newestGeneration = 0;
+      for (const [id, existing] of receipts) {
+        if (existing.nativeSessionId !== receipt.nativeSessionId) continue;
+        newestGeneration = Math.max(newestGeneration, existing.snapshotGeneration);
+        if (existing.snapshotGeneration < receipt.snapshotGeneration) receipts.delete(id);
+      }
+      if (receipt.snapshotGeneration < newestGeneration) return;
+      receipts.set(nextKey, Object.freeze({ ...receipt, timestamp: now() }));
+      prune();
+    },
+    acknowledge(input) {
+      prune();
+      const id = key(input);
+      const expected = receipts.get(id);
+      if (!expected || expected.injectedByteCount !== input.injectedByteCount || expected.injectedSha256 !== input.injectedSha256) return undefined;
+      return expected;
+    },
+    clearSession(nativeSessionId) {
+      for (const [id, receipt] of receipts) if (receipt.nativeSessionId === nativeSessionId) receipts.delete(id);
+    },
+    retireSession(nativeSessionId) {
+      prune();
+      for (const [id, receipt] of receipts) if (receipt.nativeSessionId === nativeSessionId) receipts.delete(id);
+      retiredSessions.set(nativeSessionId, now());
+      prune();
+    },
+    clear() {
+      receipts.clear();
+      retiredSessions.clear();
+    },
+    close() {
+      closed = true;
+      receipts.clear();
+      retiredSessions.clear();
+    },
+  });
+}
+
 async function recallForLoopback(
-  host: { runtime: SupermemoryRuntimeInstance; observe(metric: SupermemoryRuntimeMetric): void; scopeFingerprint: string },
+  host: { runtime: SupermemoryRuntimeInstance; observe(metric: SupermemoryRuntimeMetric): void; scopeFingerprint: string; expectedInjections?: ExpectedInjectionStore },
   role: SupermemoryRuntimeRole,
   query?: string,
   dependency: "automatic" | "explicit-recall" = "automatic",
+  correlation?: LoopbackMetricCorrelation,
 ): Promise<Record<string, unknown>> {
   const contexts: SupermemoryRenderedContext[] = [];
   const diagnostics: string[] = [];
@@ -577,12 +818,12 @@ async function recallForLoopback(
   const startedAt = Date.now();
   const explicitRecall = dependency === "explicit-recall";
   let focusedSearchMatched = false;
-  host.observe(runtimeRecallAttemptMetric({ role, scopeFingerprint: host.scopeFingerprint, dependency }));
-  const profile = await host.runtime.profile({ role, dependency });
+  host.observe(runtimeRecallAttemptMetric({ role, scopeFingerprint: host.scopeFingerprint, dependency, correlation }));
+  const profile = await host.runtime.profile({ role, dependency, correlation });
   operationMetrics.push(profile.metrics);
   host.observe(profile.metrics);
   if (query?.trim()) {
-    const search = await host.runtime.search({ role, query, dependency });
+    const search = await host.runtime.search({ role, query, dependency, correlation });
     operationMetrics.push(search.metrics);
     host.observe(search.metrics);
     if (search.ok) {
@@ -597,7 +838,20 @@ async function recallForLoopback(
   const advisoryText = renderAdvisoryContext(contexts);
   const basis = operationMetrics[0];
   if (basis) {
-    host.observe(runtimeRecallTerminalMetric({ basis, operationMetrics, contexts, diagnostics, startedAt, dependency }));
+    host.observe(runtimeRecallTerminalMetric({ basis, operationMetrics, contexts, diagnostics, startedAt, dependency, correlation }));
+  }
+
+  if (advisoryText && correlation?.logicalTurnId && correlation.snapshotGeneration !== undefined) {
+    const receipt = createAdaptiveMemoryContentReceipt(advisoryText);
+    host.expectedInjections?.remember({
+      nativeSessionId: correlation.nativeSessionId,
+      logicalTurnId: correlation.logicalTurnId,
+      sessionFingerprint: correlation.sessionFingerprint!,
+      logicalTurnFingerprint: correlation.logicalTurnFingerprint!,
+      snapshotGeneration: correlation.snapshotGeneration,
+      injectedByteCount: receipt.byteCount,
+      injectedSha256: receipt.sha256,
+    });
   }
 
   if (explicitRecall && diagnostics.length > 0) return { ok: false, diagnostics };

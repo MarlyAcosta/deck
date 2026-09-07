@@ -23,7 +23,7 @@ const HIGH_CONFIDENCE_SECRET_PATTERNS: readonly RegExp[] = [
   /(?:^|\s)--(?:token|password|api-key|secret)\s+\S+/i,
   /Authorization:\s*(?:Bearer|Basic)\s+[^\s]+/i,
   /\b(?:Cookie|Set-Cookie):\s*[^\s=]+=[^\s]+/i,
-  /"(?:authorization|x-api-key|x-supermemory-api-key)"\s*:\s*"[^"]*"/i,
+  /"(?:authorization|(?:x-)?(?:[a-z0-9]+-)*(?:api-key|access-token|auth-token|token|secret|credential))"\s*:\s*"[^"]*"/i,
   /"[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|PASSWORD|PASS(?:PHRASE)?|SECRET|CREDENTIAL|PRIVATE[_-]?KEY|AUTH(?:ORIZATION)?|COOKIE|SESSION|DSN|URI)[A-Z0-9_]*"\s*:\s*"[^"]*"/i,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/,
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/,

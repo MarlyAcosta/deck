@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { buildPiRunnerReviewPlan, type PiRunnerCapabilityInventory } from "@deck/adapter-pi";
+import { validateDeckConfig } from "@deck/core";
 import { reduce, type PlanBuilderFn } from "./reducer";
-import { createDefaultPiRunnerDashboardState, type PiRunnerReviewPlan, type RunnerDashboardState } from "./state";
+import { createDefaultPiRunnerDashboardState, loadRunnerPackageInstructionsFromConfig, type PiRunnerReviewPlan, type RunnerDashboardState } from "./state";
 import { getAdapter } from "../../runner-adapters";
 
 const piPlanBuilder: PlanBuilderFn = (state, inventory) => buildPiRunnerReviewPlan(state as any, inventory as PiRunnerCapabilityInventory);
@@ -61,6 +62,21 @@ function allActionIds(plan: PiRunnerReviewPlan | undefined): string[] {
 }
 
 describe("Pi Runner dashboard reducer", () => {
+  test("hydrates fresh local packages as selected while gated packages stay off", () => {
+    const configured = validateDeckConfig({});
+    const expectedDefaults = {
+      "codebase-memory": true,
+      "code-economy": true,
+      "context-mode": true,
+      rtk: true,
+      "adaptive-memory": false,
+      serena: false,
+    };
+
+    expect(createDefaultPiRunnerDashboardState().packageInstructions).toEqual(expectedDefaults);
+    expect(loadRunnerPackageInstructionsFromConfig(configured, "opencode")).toEqual(expectedDefaults);
+  });
+
   test("tracks an operation for an arbitrary registered runner identity", () => {
     const state = reduce(createDefaultPiRunnerDashboardState(), {
       type: "set-runner",
@@ -418,7 +434,9 @@ describe("Pi Runner dashboard reducer", () => {
   });
 
   test("toggle-package-instruction actualiza packageInstructions y invalida plan", () => {
-    let state = createDefaultPiRunnerDashboardState();
+    let state = createDefaultPiRunnerDashboardState({
+      packageInstructions: { "codebase-memory": false, "context-mode": false },
+    });
     const initialRevision = state.planRevision;
 
     state = reduce(state, { type: "toggle-package-instruction", packageId: "codebase-memory" });
@@ -449,6 +467,24 @@ describe("Pi Runner dashboard reducer", () => {
     expect(state.plan).toBeUndefined();
   });
 
+  test("programmatic Serena instruction state cannot authorize installation", () => {
+    const operation = { runner: "opencode" as const, operationId: "opencode-config-projection", explicitlySelected: false };
+    const state = createDefaultPiRunnerDashboardState({
+      runnerScope: "opencode",
+      operationId: operation.operationId,
+      currentOperation: operation,
+      selectedCapabilities: { serena: false },
+      packageInstructions: { serena: false },
+    });
+
+    const projected = reduce(state, { type: "set-package-instruction", packageId: "serena", enabled: true });
+
+    expect(projected.packageInstructions.serena).toBe(true);
+    expect(projected.selectedCapabilities.serena).toBe(false);
+    expect(projected.explicitlySelectedCapabilities.serena).toBeUndefined();
+    expect(projected.currentOperation).toEqual(operation);
+  });
+
   test("rejects baseline and non-package IDs at the reducer boundary", () => {
     const state = createDefaultPiRunnerDashboardState();
     expect(reduce(state, { type: "toggle-package-instruction", packageId: "code-economy" } as any)).toBe(state);
@@ -456,7 +492,9 @@ describe("Pi Runner dashboard reducer", () => {
   });
 
   test("packageInstructions es independiente de selectedCapabilities", () => {
-    let state = createDefaultPiRunnerDashboardState();
+    let state = createDefaultPiRunnerDashboardState({
+      packageInstructions: { "codebase-memory": false },
+    });
 
     // selectedCapabilities controls installation; packageInstructions controls instruction injection
     state = reduce(state, { type: "set-capability", capabilityId: "codebase-memory", selected: true });

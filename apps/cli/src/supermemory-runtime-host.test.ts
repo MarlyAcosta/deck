@@ -6,6 +6,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 import { createSupermemoryRuntimeHost } from "./supermemory-runtime-host";
 import type { SupermemoryObservabilitySink } from "./supermemory-observability";
@@ -21,7 +22,20 @@ function transport(adds: SupermemoryAddPayload[]): SupermemoryRuntimeTransport {
 }
 
 function event(body: Record<string, unknown>): string {
+  return JSON.stringify({ eventId: `event-${Math.random().toString(36).slice(2)}`, timestamp: Date.now(), ...defaultOpenCodeAutomaticCorrelation(body), ...body });
+}
+
+function rawEvent(body: Record<string, unknown>): string {
   return JSON.stringify({ eventId: `event-${Math.random().toString(36).slice(2)}`, timestamp: Date.now(), ...body });
+}
+
+function defaultOpenCodeAutomaticCorrelation(body: Record<string, unknown>): Record<string, unknown> {
+  if (body.runnerId !== "opencode" || (body.event !== "session_start" && body.event !== "recall" && body.event !== "capture")) return {};
+  const sessionId = typeof body.sessionId === "string" && body.sessionId.length > 0 ? body.sessionId : "native-session";
+  return {
+    ...(body.logicalTurnId === undefined && body.messageId === undefined ? { logicalTurnId: `${sessionId}-turn` } : {}),
+    ...(body.snapshotGeneration === undefined ? { snapshotGeneration: 1 } : {}),
+  };
 }
 
 function testObservabilitySink(): SupermemoryObservabilitySink {
@@ -33,6 +47,17 @@ function testObservabilitySink(): SupermemoryObservabilitySink {
     health: () => ({ healthy: true, diagnostics: [] }),
   };
 }
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+const fakeHostExecutableReceipt = Object.freeze({
+  hostExecutableSha256: "5".repeat(64),
+  hostExecutableByteCount: 12345,
+  hostExecutableSource: "proc-self-exe",
+  hostExecutableKind: "deck-canary",
+});
 
 describe("Supermemory runner loopback bridge", () => {
   async function gitProject(remote = "https://github.com/kevin15011/deck.git") {
@@ -136,7 +161,7 @@ describe("Supermemory runner loopback bridge", () => {
     });
     const bridge = await host.startLoopbackBridge();
     const headers = { authorization: `Bearer ${bridge!.token}`, "content-type": "application/json" };
-    const duplicateBody = JSON.stringify({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "duplicate-capture", timestamp: Date.now(), event: "capture", sessionId: "native-session", source: "trusted-user-prompt", content: "Important limitation: capture this concurrent duplicate event exactly once for the managed runtime coalescing test." });
+    const duplicateBody = rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "duplicate-capture", event: "capture", sessionId: "native-session", logicalTurnId: "duplicate-turn", snapshotGeneration: 1, source: "trusted-user-prompt", content: "Important limitation: capture this concurrent duplicate event exactly once for the managed runtime coalescing test." });
     const first = fetch(bridge!.endpoint, { method: "POST", headers, body: duplicateBody }).then((response) => response.json());
     const second = fetch(bridge!.endpoint, { method: "POST", headers, body: duplicateBody }).then((response) => response.json());
     for (let i = 0; i < 20 && addAttempts === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
@@ -166,7 +191,7 @@ describe("Supermemory runner loopback bridge", () => {
     });
     const retryBridge = await retryHost.startLoopbackBridge();
     const retryHeaders = { authorization: `Bearer ${retryBridge!.token}`, "content-type": "application/json" };
-    const retryBody = JSON.stringify({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "retry-capture", timestamp: Date.now(), event: "capture", sessionId: "native-session", source: "trusted-user-prompt", content: "Important limitation: retry this failed event after the provider succeeds on a later attempt." });
+    const retryBody = rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "retry-capture", event: "capture", sessionId: "native-session", logicalTurnId: "retry-turn", snapshotGeneration: 1, source: "trusted-user-prompt", content: "Important limitation: retry this failed event after the provider succeeds on a later attempt." });
     const failed = await fetch(retryBridge!.endpoint, { method: "POST", headers: retryHeaders, body: retryBody }).then((response) => response.json());
     expect(failed.ok).toBe(false);
     shouldFail = false;
@@ -309,6 +334,46 @@ describe("Supermemory runner loopback bridge", () => {
     }
   });
 
+  test("observability sink and callback failures stay categorical without leaking raw diagnostics", async () => {
+    const projectRoot = await gitProject("https://github.com/acme/observability-fail-open.git");
+    const sentinelPath = "/tmp/deck-observability-secret-path/supermemory-runtime.jsonl";
+    const rejectedValue = "raw-rejected-observability-value";
+    const token = "sm_observability_secret_token";
+    try {
+      const host = await createSupermemoryRuntimeHost({
+        projectRoot,
+        stateHome: await mkdtemp(join(tmpdir(), "deck-sm-observe-host-")),
+        deckConfig: { ...getDefaultDeckConfig(), adaptiveMemory: { enabled: true, activeProvider: "supermemory" } },
+        runnerId: "opencode",
+        role: "lead",
+        launchMode: "interactive",
+        deferInitialRecallToLoopback: true,
+        transport: transport([]),
+        observabilitySink: {
+          path: sentinelPath,
+          healthy: true,
+          diagnostics: [],
+          observe() { throw new Error(`EACCES ${sentinelPath} rejected=${rejectedValue} token=${token}`); },
+          health: () => ({ healthy: false, diagnostics: [`unhealthy ${sentinelPath} rejected=${rejectedValue} token=${token}`] }),
+        },
+        observe() { throw new Error(`observer ${sentinelPath} rejected=${rejectedValue} token=${token}`); },
+      });
+
+      expect(host.enabled).toBe(true);
+      expect(host.metrics.length).toBeGreaterThan(0);
+      const diagnostics = JSON.stringify(host.diagnostics);
+      expect(diagnostics).toContain("supermemory-runtime-observability-degraded");
+      expect(diagnostics).toContain("sink-write");
+      expect(diagnostics).toContain("sink-health");
+      expect(diagnostics).toContain("observer-callback");
+      for (const forbidden of [sentinelPath, rejectedValue, token, "EACCES"]) {
+        expect(diagnostics).not.toContain(forbidden);
+      }
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   test("rejects nested runner-supplied provider scope fields before provider calls", async () => {
     const calls: string[] = [];
     const projectRoot = await gitProject();
@@ -349,17 +414,65 @@ describe("Supermemory runner loopback bridge", () => {
     await rm(projectRoot, { recursive: true, force: true });
   });
 
+  test("OpenCode loopback rejects missing session and automatic events without turn correlation before provider calls", async () => {
+    const calls: string[] = [];
+    const projectRoot = await gitProject("https://github.com/acme/opencode-boundary-validation.git");
+    const host = await createSupermemoryRuntimeHost({
+      projectRoot,
+      stateHome: await mkdtemp(join(tmpdir(), "deck-sm-boundary-validation-")),
+      deckConfig: { ...getDefaultDeckConfig(), adaptiveMemory: { enabled: true, activeProvider: "supermemory" } },
+      runnerId: "opencode",
+      role: "lead",
+      launchMode: "interactive",
+      deferInitialRecallToLoopback: true,
+      observabilitySink: testObservabilitySink(),
+      transport: {
+        async health() { calls.push("health"); },
+        async profile() { calls.push("profile"); return { profile: { static: ["must not recall"] } }; },
+        async search() { calls.push("search"); return { results: [{ content: "must not search" }] }; },
+        async add() { calls.push("add"); },
+      },
+    });
+    const bridge = await host.startLoopbackBridge();
+    const headers = { authorization: `Bearer ${bridge!.token}`, "content-type": "application/json" };
+    try {
+      const missingSession = await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", event: "capture", source: "trusted-user-prompt", content: "Important limitation: missing sessions are rejected." }),
+      }).then((response) => response.json());
+      const missingTurn = await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", event: "session_start", sessionId: "native-boundary", role: "lead", query: "must not reach provider" }),
+      }).then((response) => response.json());
+      const invalidGeneration = await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", event: "capture", sessionId: "native-boundary", logicalTurnId: "turn", snapshotGeneration: 0, source: "trusted-user-prompt", content: "Important limitation: invalid generations are rejected." }),
+      }).then((response) => response.json());
+
+      expect(missingSession).toMatchObject({ ok: false, diagnostics: ["invalid-session-id"] });
+      expect(missingTurn).toMatchObject({ ok: false, diagnostics: ["invalid-turn-correlation"] });
+      expect(invalidGeneration).toMatchObject({ ok: false, diagnostics: ["invalid-turn-correlation"] });
+      expect(calls).toEqual(["health"]);
+    } finally {
+      await bridge?.close();
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   test("Project A and Project B loopbacks bind distinct immutable containers despite adversarial prompt text", async () => {
     const roots = [
       await gitProject("https://github.com/acme/project-a.git"),
       await gitProject("https://github.com/acme/project-b.git"),
     ];
-    const seen: Record<string, string[]> = { a: [], b: [] };
+    const seen: Record<string, Array<{ operation: string; containerTag: string }>> = { a: [], b: [] };
     const makeTransport = (key: "a" | "b"): SupermemoryRuntimeTransport => ({
-      async health(payload) { seen[key].push(payload.containerTag); },
-      async profile(payload) { seen[key].push(payload.containerTag); return { profile: { static: ["profile"] } }; },
-      async search(payload) { seen[key].push(payload.containerTag); return { results: [{ content: payload.q }] }; },
-      async add(payload) { seen[key].push(payload.containerTag); },
+      async health(payload) { seen[key].push({ operation: "health", containerTag: payload.containerTag }); },
+      async profile(payload) { seen[key].push({ operation: "profile", containerTag: payload.containerTag }); return { profile: { static: ["profile"] } }; },
+      async search(payload) { seen[key].push({ operation: "search", containerTag: payload.containerTag }); return { results: [{ content: payload.q }] }; },
+      async add(payload) { seen[key].push({ operation: "add", containerTag: payload.containerTag }); },
     });
     try {
       for (const [index, key] of (["a", "b"] as const).entries()) {
@@ -378,18 +491,30 @@ describe("Supermemory runner loopback bridge", () => {
         await fetch(bridge!.endpoint, {
           method: "POST",
           headers: { authorization: `Bearer ${bridge!.token}`, "content-type": "application/json" },
-          body: event({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", event: "session_start", sessionId: `native-${key}`, role: "lead", query: "Compare deck kevin15011/deck sm_project_v1_kevin15011_deck" }),
+          body: event({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", event: "session_start", sessionId: `native-${key}`, logicalTurnId: `native-${key}-turn`, snapshotGeneration: index + 1, role: "lead", query: "Compare deck kevin15011/deck sm_project_v1_kevin15011_deck" }),
         });
         await fetch(bridge!.endpoint, {
           method: "POST",
           headers: { authorization: `Bearer ${bridge!.token}`, "content-type": "application/json" },
-          body: event({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", event: "capture", sessionId: `native-${key}`, source: "trusted-user-prompt", content: "Decision: prompt mentions sm_project_v1_kevin15011_deck as inert data." }),
+          body: event({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", event: "capture", sessionId: `native-${key}`, logicalTurnId: `native-${key}-turn`, snapshotGeneration: index + 1, source: "trusted-user-prompt", content: "Decision: prompt mentions sm_project_v1_kevin15011_deck as inert data." }),
         });
         await bridge!.close();
       }
-      expect(new Set(seen.a)).toEqual(new Set(["sm_project_v1_acme_project_a"]));
-      expect(new Set(seen.b)).toEqual(new Set(["sm_project_v1_acme_project_b"]));
-      expect([...seen.a, ...seen.b]).not.toContain("sm_project_v1_kevin15011_deck");
+      expect(seen.a).toEqual(expect.arrayContaining([
+        { operation: "health", containerTag: "sm_project_v1_acme_project_a" },
+        { operation: "profile", containerTag: "sm_project_v1_acme_project_a" },
+        { operation: "search", containerTag: "sm_project_v1_acme_project_a" },
+        { operation: "add", containerTag: "sm_project_v1_acme_project_a" },
+      ]));
+      expect(seen.b).toEqual(expect.arrayContaining([
+        { operation: "health", containerTag: "sm_project_v1_acme_project_b" },
+        { operation: "profile", containerTag: "sm_project_v1_acme_project_b" },
+        { operation: "search", containerTag: "sm_project_v1_acme_project_b" },
+        { operation: "add", containerTag: "sm_project_v1_acme_project_b" },
+      ]));
+      expect(new Set(seen.a.map((entry) => entry.containerTag))).toEqual(new Set(["sm_project_v1_acme_project_a"]));
+      expect(new Set(seen.b.map((entry) => entry.containerTag))).toEqual(new Set(["sm_project_v1_acme_project_b"]));
+      expect([...seen.a, ...seen.b].map((entry) => entry.containerTag)).not.toContain("sm_project_v1_kevin15011_deck");
     } finally {
       await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
     }
@@ -420,6 +545,71 @@ describe("Supermemory runner loopback bridge", () => {
       expect(JSON.stringify([...observed, ...aggregate])).not.toContain("sm_project_v1_acme_direct_success");
       expect(JSON.stringify([...observed, ...aggregate])).not.toContain("credential");
       expect(host.advisoryText).toContain("DECK_ADAPTIVE_CONTEXT_JSON_V1");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("direct non-loopback automatic captures derive host turn fingerprints without raw ids", async () => {
+    const adds: SupermemoryAddPayload[] = [];
+    const projectRoot = await gitProject("https://github.com/acme/direct-capture-correlation.git");
+    try {
+      const host = await createSupermemoryRuntimeHost({
+        projectRoot,
+        stateHome: await mkdtemp(join(tmpdir(), "deck-sm-direct-capture-correlation-")),
+        deckConfig: { ...getDefaultDeckConfig(), adaptiveMemory: { enabled: true, activeProvider: "supermemory" } },
+        runnerId: "codex",
+        role: "lead",
+        launchMode: "exec",
+        deferInitialRecallToLoopback: true,
+        observabilitySink: testObservabilitySink(),
+        transport: transport(adds),
+      });
+
+      const captured = await host.captureLaunchInput({ projectRoot, teamId: "developer-team", mode: "exec", prompt: ["Decision: direct automatic capture metrics require host-derived turn correlation."], stdin: "closed", stdinPayload: { type: "utf8", content: "Decision: direct automatic capture metrics require host-derived turn correlation." }, deckConfig: getDefaultDeckConfig() });
+
+      expect(captured.metrics).toHaveLength(1);
+      expect(captured.metrics[0]).toMatchObject({
+        operation: "capture",
+        status: "succeeded",
+        sessionFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        logicalTurnFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        snapshotGeneration: 1,
+      });
+      expect(captured.metrics[0]!.sessionFingerprint).not.toBe(captured.metrics[0]!.logicalTurnFingerprint);
+      expect(JSON.stringify(captured.metrics)).not.toContain(host.sessionId);
+      expect(adds).toHaveLength(1);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("host executable receipt resolver is evaluated once while multiple host metrics are enriched", async () => {
+    const projectRoot = await gitProject("https://github.com/acme/host-executable-cache.git");
+    let resolverCalls = 0;
+    try {
+      const host = await createSupermemoryRuntimeHost({
+        projectRoot,
+        stateHome: await mkdtemp(join(tmpdir(), "deck-sm-host-executable-cache-")),
+        deckConfig: { ...getDefaultDeckConfig(), adaptiveMemory: { enabled: true, activeProvider: "supermemory" } },
+        runnerId: "opencode",
+        role: "lead",
+        launchMode: "exec",
+        deferInitialRecallToLoopback: true,
+        observabilitySink: testObservabilitySink(),
+        runtimeExecutableReceiptResolver: () => {
+          resolverCalls += 1;
+          return { ok: true, receipt: fakeHostExecutableReceipt };
+        },
+        transport: transport([]),
+      } as Parameters<typeof createSupermemoryRuntimeHost>[0] & { runtimeExecutableReceiptResolver: () => { ok: true; receipt: typeof fakeHostExecutableReceipt } });
+
+      await host.captureLaunchInput({ projectRoot, teamId: "developer-team", mode: "exec", prompt: ["Decision: host executable receipts are cached."], stdin: "closed", stdinPayload: { type: "utf8", content: "Decision: host executable receipts are cached." }, deckConfig: getDefaultDeckConfig() });
+      host.recordLifecycle("runtime-cleanup");
+
+      expect(resolverCalls).toBe(1);
+      expect(host.metrics.length).toBeGreaterThan(2);
+      for (const metric of host.metrics) expect(metric).toMatchObject(fakeHostExecutableReceipt);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
@@ -904,6 +1094,300 @@ describe("Supermemory runner loopback bridge", () => {
       expect(new Set(seen)).toEqual(new Set(["sm_project_v1_acme_project_a"]));
     } finally {
       await Promise.all([projectA, projectB, stateHome].map((path) => rm(path, { recursive: true, force: true })));
+    }
+  });
+
+  test("loopback derives receipt fingerprints, records exact recall bytes, and validates matching injection acknowledgments", async () => {
+    const projectRoot = await gitProject("https://github.com/acme/receipt-join.git");
+    const observed: Record<string, unknown>[] = [];
+    const host = await createSupermemoryRuntimeHost({
+      projectRoot,
+      stateHome: await mkdtemp(join(tmpdir(), "deck-sm-receipt-join-state-")),
+      deckConfig: { ...getDefaultDeckConfig(), adaptiveMemory: { enabled: true, activeProvider: "supermemory" } },
+      runnerId: "opencode",
+      role: "lead",
+      launchMode: "interactive",
+      deferInitialRecallToLoopback: true,
+      observabilitySink: testObservabilitySink(),
+      observe: (metric) => observed.push(metric as Record<string, unknown>),
+      hostExecutableReceipt: fakeHostExecutableReceipt,
+      transport: {
+        async health() {},
+        async profile() { return { profile: { static: ["Remembered convention: receipts are metadata only."] } }; },
+        async search() { return { results: [{ id: "receipt-search", content: "Decision: injection joins exact advisory bytes." }] }; },
+        async add() {},
+      },
+    } as Parameters<typeof createSupermemoryRuntimeHost>[0] & { hostExecutableReceipt: typeof fakeHostExecutableReceipt });
+    const bridge = await host.startLoopbackBridge();
+    const headers = { authorization: `Bearer ${bridge!.token}`, "content-type": "application/json" };
+    try {
+      const recall = await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: event({
+          schema: "deck-runner-memory-loopback-v1",
+          runnerId: "opencode",
+          eventId: "receipt-turn-start",
+          event: "session_start",
+          sessionId: "native-session-join",
+          logicalTurnId: "native-turn-join",
+          messageId: "native-turn-join",
+          snapshotGeneration: 12,
+          role: "lead",
+          query: "Decision: receipt query must not persist.",
+        }),
+      }).then((response) => response.json());
+      const advisoryText = String(recall.advisoryText);
+      const expectedDigest = sha256Hex(advisoryText);
+      const expectedBytes = Buffer.byteLength(advisoryText, "utf8");
+
+      const terminal = host.metrics.find((metric) => metric.operation === "runtime_recall" && metric.status === "succeeded" && metric.snapshotGeneration === 12) as Record<string, unknown> | undefined;
+      expect(terminal).toMatchObject({
+        operation: "runtime_recall",
+        channel: "runtime-recall",
+        status: "succeeded",
+        sessionFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        logicalTurnFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        snapshotGeneration: 12,
+        injectedByteCount: expectedBytes,
+        injectedSha256: expectedDigest,
+        ...fakeHostExecutableReceipt,
+      });
+      expect(terminal!.sessionFingerprint).not.toBe(terminal!.logicalTurnFingerprint);
+      expect(host.metrics).toContainEqual(expect.objectContaining({ operation: "profile", sessionFingerprint: terminal!.sessionFingerprint, logicalTurnFingerprint: terminal!.logicalTurnFingerprint, snapshotGeneration: 12 }));
+      expect(host.metrics).toContainEqual(expect.objectContaining({ operation: "search", sessionFingerprint: terminal!.sessionFingerprint, logicalTurnFingerprint: terminal!.logicalTurnFingerprint, snapshotGeneration: 12 }));
+
+      await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: event({
+          schema: "deck-runner-memory-loopback-v1",
+          runnerId: "opencode",
+          eventId: "receipt-injection-ack",
+          event: "injection_ack",
+          sessionId: "native-session-join",
+          logicalTurnId: "native-turn-join",
+          snapshotGeneration: 12,
+          injectedByteCount: expectedBytes,
+          injectedSha256: expectedDigest,
+        }),
+      });
+      const injection = host.metrics.filter((metric) => metric.operation === "runtime_injection") as Record<string, unknown>[];
+      expect(injection).toHaveLength(1);
+      expect(injection[0]).toMatchObject({
+        operation: "runtime_injection",
+        channel: "system-transform",
+        status: "succeeded",
+        sessionFingerprint: terminal!.sessionFingerprint,
+        logicalTurnFingerprint: terminal!.logicalTurnFingerprint,
+        snapshotGeneration: 12,
+        injectedByteCount: expectedBytes,
+        injectedSha256: expectedDigest,
+        ...fakeHostExecutableReceipt,
+      });
+      const serialized = JSON.stringify([...host.metrics, ...observed]);
+      expect(serialized).not.toContain("native-session-join");
+      expect(serialized).not.toContain("native-turn-join");
+      expect(serialized).not.toContain("receipt query must not persist");
+      expect(serialized).not.toContain("sm_project_v1_acme_receipt_join");
+    } finally {
+      await bridge?.close();
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("distinct matching injection acknowledgments each emit metrics while duplicate event ids replay", async () => {
+    const projectRoot = await gitProject("https://github.com/acme/repeated-injection-ack.git");
+    const host = await createSupermemoryRuntimeHost({
+      projectRoot,
+      stateHome: await mkdtemp(join(tmpdir(), "deck-sm-repeated-injection-ack-")),
+      deckConfig: { ...getDefaultDeckConfig(), adaptiveMemory: { enabled: true, activeProvider: "supermemory" } },
+      runnerId: "opencode",
+      role: "lead",
+      launchMode: "interactive",
+      deferInitialRecallToLoopback: true,
+      observabilitySink: testObservabilitySink(),
+      hostExecutableReceipt: fakeHostExecutableReceipt,
+      transport: {
+        async health() {},
+        async profile() { return { profile: { static: ["Remembered convention: every actual push gets its own receipt."] } }; },
+        async search() { return { results: [{ content: "Decision: repeated actual pushes are separately observable." }] }; },
+        async add() {},
+      },
+    } as Parameters<typeof createSupermemoryRuntimeHost>[0] & { hostExecutableReceipt: typeof fakeHostExecutableReceipt });
+    const bridge = await host.startLoopbackBridge();
+    const headers = { authorization: `Bearer ${bridge!.token}`, "content-type": "application/json" };
+    try {
+      const recall = await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: event({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "repeat-start", event: "session_start", sessionId: "native-repeat", logicalTurnId: "turn-repeat", messageId: "turn-repeat", snapshotGeneration: 31, role: "lead" }),
+      }).then((response) => response.json());
+      const advisoryText = String(recall.advisoryText);
+      const ack = (eventId: string) => rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId, event: "injection_ack", sessionId: "native-repeat", logicalTurnId: "turn-repeat", snapshotGeneration: 31, injectedByteCount: Buffer.byteLength(advisoryText, "utf8"), injectedSha256: sha256Hex(advisoryText) });
+
+      await fetch(bridge!.endpoint, { method: "POST", headers, body: ack("repeat-ack-1") });
+      const secondAck = ack("repeat-ack-2");
+      await fetch(bridge!.endpoint, { method: "POST", headers, body: secondAck });
+      await fetch(bridge!.endpoint, { method: "POST", headers, body: secondAck });
+
+      const injections = host.metrics.filter((metric) => metric.operation === "runtime_injection");
+      expect(injections).toHaveLength(2);
+      expect(injections.map((metric) => metric.snapshotGeneration)).toEqual([31, 31]);
+    } finally {
+      await bridge?.close();
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("late older recall completion cannot replace a newer expected generation", async () => {
+    const projectRoot = await gitProject("https://github.com/acme/late-generation.git");
+    let releaseOlder!: () => void;
+    const olderGate = new Promise<void>((resolve) => { releaseOlder = resolve; });
+    const host = await createSupermemoryRuntimeHost({
+      projectRoot,
+      stateHome: await mkdtemp(join(tmpdir(), "deck-sm-late-generation-")),
+      deckConfig: { ...getDefaultDeckConfig(), adaptiveMemory: { enabled: true, activeProvider: "supermemory" } },
+      runnerId: "opencode",
+      role: "lead",
+      launchMode: "interactive",
+      deferInitialRecallToLoopback: true,
+      observabilitySink: testObservabilitySink(),
+      hostExecutableReceipt: fakeHostExecutableReceipt,
+      transport: {
+        async health() {},
+        async profile() { return { profile: {} }; },
+        async search(payload) {
+          if (payload.q === "older") await olderGate;
+          return { results: [{ content: `Decision: ${payload.q} generation wins.` }] };
+        },
+        async add() {},
+      },
+    } as Parameters<typeof createSupermemoryRuntimeHost>[0] & { hostExecutableReceipt: typeof fakeHostExecutableReceipt });
+    const bridge = await host.startLoopbackBridge();
+    const headers = { authorization: `Bearer ${bridge!.token}`, "content-type": "application/json" };
+    try {
+      const older = fetch(bridge!.endpoint, { method: "POST", headers, body: rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "late-older-start", event: "session_start", sessionId: "native-late", logicalTurnId: "turn-old", messageId: "turn-old", snapshotGeneration: 41, role: "lead", query: "older" }) }).then((response) => response.json());
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const newer = await fetch(bridge!.endpoint, { method: "POST", headers, body: rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "late-newer-start", event: "session_start", sessionId: "native-late", logicalTurnId: "turn-new", messageId: "turn-new", snapshotGeneration: 42, role: "lead", query: "newer" }) }).then((response) => response.json());
+      const newerText = String(newer.advisoryText);
+      await fetch(bridge!.endpoint, { method: "POST", headers, body: rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "late-newer-ack", event: "injection_ack", sessionId: "native-late", logicalTurnId: "turn-new", snapshotGeneration: 42, injectedByteCount: Buffer.byteLength(newerText, "utf8"), injectedSha256: sha256Hex(newerText) }) });
+      releaseOlder();
+      const olderResult = await older;
+      const olderText = String(olderResult.advisoryText);
+      await fetch(bridge!.endpoint, { method: "POST", headers, body: rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "late-older-ack", event: "injection_ack", sessionId: "native-late", logicalTurnId: "turn-old", snapshotGeneration: 41, injectedByteCount: Buffer.byteLength(olderText, "utf8"), injectedSha256: sha256Hex(olderText) }) });
+
+      expect(host.metrics.filter((metric) => metric.operation === "runtime_injection")).toHaveLength(1);
+      expect(host.metrics.find((metric) => metric.operation === "runtime_injection")?.snapshotGeneration).toBe(42);
+    } finally {
+      await bridge?.close();
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("in-flight recall completing after shutdown does not recreate a stale injection expectation", async () => {
+    const projectRoot = await gitProject("https://github.com/acme/shutdown-race.git");
+    let releaseRecall!: () => void;
+    const recallGate = new Promise<void>((resolve) => { releaseRecall = resolve; });
+    const host = await createSupermemoryRuntimeHost({
+      projectRoot,
+      stateHome: await mkdtemp(join(tmpdir(), "deck-sm-shutdown-race-")),
+      deckConfig: { ...getDefaultDeckConfig(), adaptiveMemory: { enabled: true, activeProvider: "supermemory" } },
+      runnerId: "opencode",
+      role: "lead",
+      launchMode: "interactive",
+      deferInitialRecallToLoopback: true,
+      observabilitySink: testObservabilitySink(),
+      hostExecutableReceipt: fakeHostExecutableReceipt,
+      transport: {
+        async health() {},
+        async profile() { return { profile: {} }; },
+        async search() { await recallGate; return { results: [{ content: "Decision: shutdown retires stale recall expectations." }] }; },
+        async add() {},
+      },
+    } as Parameters<typeof createSupermemoryRuntimeHost>[0] & { hostExecutableReceipt: typeof fakeHostExecutableReceipt });
+    const bridge = await host.startLoopbackBridge();
+    const headers = { authorization: `Bearer ${bridge!.token}`, "content-type": "application/json" };
+    try {
+      const recall = fetch(bridge!.endpoint, { method: "POST", headers, body: rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "race-start", event: "session_start", sessionId: "native-race", logicalTurnId: "turn-race", messageId: "turn-race", snapshotGeneration: 51, role: "lead", query: "race" }) }).then((response) => response.json());
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await fetch(bridge!.endpoint, { method: "POST", headers, body: rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "race-shutdown", event: "shutdown_flush", sessionId: "native-race", role: "lead" }) });
+      releaseRecall();
+      const recalled = await recall;
+      const advisoryText = String(recalled.advisoryText);
+      await fetch(bridge!.endpoint, { method: "POST", headers, body: rawEvent({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "race-late-ack", event: "injection_ack", sessionId: "native-race", logicalTurnId: "turn-race", snapshotGeneration: 51, injectedByteCount: Buffer.byteLength(advisoryText, "utf8"), injectedSha256: sha256Hex(advisoryText) }) });
+
+      expect(host.metrics.filter((metric) => metric.operation === "runtime_injection")).toHaveLength(0);
+    } finally {
+      await bridge?.close();
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("mismatched stale and unsolicited injection acknowledgments do not emit success metrics", async () => {
+    const projectRoot = await gitProject("https://github.com/acme/receipt-mismatch.git");
+    const host = await createSupermemoryRuntimeHost({
+      projectRoot,
+      stateHome: await mkdtemp(join(tmpdir(), "deck-sm-receipt-mismatch-state-")),
+      deckConfig: { ...getDefaultDeckConfig(), adaptiveMemory: { enabled: true, activeProvider: "supermemory" } },
+      runnerId: "opencode",
+      role: "lead",
+      launchMode: "interactive",
+      deferInitialRecallToLoopback: true,
+      observabilitySink: testObservabilitySink(),
+      hostExecutableReceipt: fakeHostExecutableReceipt,
+      transport: {
+        async health() {},
+        async profile() { return { profile: { static: ["Remembered convention: stale ack rejection."] } }; },
+        async search() { return { results: [{ content: "Decision: stale acks are ignored." }] }; },
+        async add() {},
+      },
+    } as Parameters<typeof createSupermemoryRuntimeHost>[0] & { hostExecutableReceipt: typeof fakeHostExecutableReceipt });
+    const bridge = await host.startLoopbackBridge();
+    const headers = { authorization: `Bearer ${bridge!.token}`, "content-type": "application/json" };
+    try {
+      const recall = await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: event({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "mismatch-start", event: "session_start", sessionId: "native-mismatch", logicalTurnId: "turn-1", messageId: "turn-1", snapshotGeneration: 21, role: "lead" }),
+      }).then((response) => response.json());
+      const advisoryText = String(recall.advisoryText);
+      const expectedBytes = Buffer.byteLength(advisoryText, "utf8");
+      const expectedDigest = sha256Hex(advisoryText);
+
+      await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: event({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "mismatch-wrong-digest", event: "injection_ack", sessionId: "native-mismatch", logicalTurnId: "turn-1", snapshotGeneration: 21, injectedByteCount: expectedBytes, injectedSha256: "0".repeat(64) }),
+      });
+      await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: event({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "mismatch-unsolicited", event: "injection_ack", sessionId: "native-mismatch", logicalTurnId: "missing-turn", snapshotGeneration: 21, injectedByteCount: expectedBytes, injectedSha256: expectedDigest }),
+      });
+      expect(host.metrics.filter((metric) => metric.operation === "runtime_injection")).toHaveLength(0);
+
+      await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: event({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "mismatch-good", event: "injection_ack", sessionId: "native-mismatch", logicalTurnId: "turn-1", snapshotGeneration: 21, injectedByteCount: expectedBytes, injectedSha256: expectedDigest }),
+      });
+      expect(host.metrics.filter((metric) => metric.operation === "runtime_injection")).toHaveLength(1);
+
+      await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: event({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "mismatch-new-turn", event: "session_start", sessionId: "native-mismatch", logicalTurnId: "turn-2", messageId: "turn-2", snapshotGeneration: 22, role: "lead" }),
+      });
+      await fetch(bridge!.endpoint, {
+        method: "POST",
+        headers,
+        body: event({ schema: "deck-runner-memory-loopback-v1", runnerId: "opencode", eventId: "mismatch-stale-old-turn", event: "injection_ack", sessionId: "native-mismatch", logicalTurnId: "turn-1", snapshotGeneration: 21, injectedByteCount: expectedBytes, injectedSha256: expectedDigest }),
+      });
+      expect(host.metrics.filter((metric) => metric.operation === "runtime_injection")).toHaveLength(1);
+    } finally {
+      await bridge?.close();
+      await rm(projectRoot, { recursive: true, force: true });
     }
   });
 });

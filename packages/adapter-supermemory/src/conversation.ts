@@ -26,7 +26,7 @@ export type SupermemoryConversationIngestRequest = Readonly<{
   containerTag: string;
   customId: string;
   content: string;
-  metadata: Readonly<{ role: SupermemoryConversationRole; capturedAt: string; source: SupermemoryConversationSource; dependency: SupermemoryConversationDependency; correlationId: string }>;
+  metadata: Readonly<{ role: SupermemoryConversationRole; capturedAt: string; source: SupermemoryConversationSource; dependency: SupermemoryConversationDependency }>;
   dreaming: "dynamic" | "instant";
 }>;
 
@@ -65,7 +65,7 @@ export function redactSupermemoryConversationContent(content: string): { safe: b
 export function buildSupermemoryConversationIngest(input: {
   canonicalScope: string;
   sessionId: string;
-  turn: Readonly<{ role: SupermemoryConversationRole; content: string; source: SupermemoryConversationSource; capturedAt?: string; dependency?: SupermemoryConversationDependency; correlationId?: string }>;
+  turn: Readonly<{ role: SupermemoryConversationRole; content: string; source: SupermemoryConversationSource; capturedAt?: string; dependency?: SupermemoryConversationDependency }>;
   dreaming?: "dynamic" | "instant";
 }): SupermemoryConversationIngestResult {
   const canonicalScope = input.canonicalScope.trim();
@@ -84,7 +84,6 @@ export function buildSupermemoryConversationIngest(input: {
         capturedAt: input.turn.capturedAt ?? new Date(0).toISOString(),
         source: input.turn.source,
         dependency: input.turn.dependency ?? "automatic",
-        correlationId: input.turn.correlationId ?? stableDigest(`${sessionId}:${input.turn.source}:${redacted.content}`),
       },
       dreaming: input.dreaming ?? "dynamic",
     },

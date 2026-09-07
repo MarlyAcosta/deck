@@ -12,6 +12,24 @@ function createTempDir(prefix = "deck-test-"): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
+const MEMORY_LOOPBACK_ENV_KEYS = ["DECK_RUNNER_MEMORY_ENDPOINT", "DECK_RUNNER_MEMORY_TOKEN", "SUPERMEMORY_API_KEY"] as const;
+
+async function withScrubbedMemoryLoopbackEnv<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const key of MEMORY_LOOPBACK_ENV_KEYS) {
+    previous.set(key, process.env[key]);
+    delete process.env[key];
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 function writeOrchestratorAssignment(projectRoot: string, model = "openai-codex/gpt-5.5", thinking: string | undefined = "medium") {
   mkdirSync(join(projectRoot, ".pi", "agents"), { recursive: true });
   writeFileSync(
@@ -64,14 +82,14 @@ describe("runPiLaunch", () => {
     try {
       execFileSync("git", ["init"], { cwd: projectRoot, stdio: "ignore" });
       execFileSync("git", ["remote", "add", "origin", "git@github.com:kevin15011/deck.git"], { cwd: projectRoot, stdio: "ignore" });
-      const result = await runPiLaunchProduction({
+      const result = await withScrubbedMemoryLoopbackEnv(() => runPiLaunchProduction({
         teamId: "developer-team",
         projectRoot,
         flags: {},
         commandExists: () => true,
         deckConfig: { ...getDefaultDeckConfig(), adaptiveMemory: { enabled: true, activeProvider: "supermemory" } },
         supermemoryRuntime: { stateHome: join(projectRoot, ".state"), transport },
-      });
+      }));
       expect(result.status).toBe("launched");
       if (result.status === "launched") {
         expect(result.plan.env).not.toHaveProperty("DECK_RUNNER_MEMORY_ENDPOINT");

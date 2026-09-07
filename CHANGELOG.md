@@ -9,9 +9,30 @@ All notable release changes to Deck are recorded here. Current release procedure
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-07
+
+### Added
+
+- Added Deck-supervised Supermemory conversation capture and bounded project-profile and task-relevant recall, with one canonical scope per project and one conversation document per session. Automatic memory is available only on runner paths with a verified capture and context-injection boundary.
+- Added managed project recall so agents can retrieve relevant project context without choosing provider-specific scopes or exposing credentials.
+- Added metadata-only receipts that correlate capture, recall, and actual context injection by project, session, and logical turn, without persisting private identifiers or memory content in observability records.
+
 ### Changed
 
 - Supermemory Adaptive Memory now distinguishes Deck-supervised runtime behavior from optional MCP recall, avoids mixed stdout capture, and keeps Pi credentials in Deck's secret store instead of runner MCP config.
+- Supermemory owns extraction, profiles, ranking, and deduplication; Deck limits retrieved context and keeps ordinary memory failures from interrupting coding work.
+- OpenCode now retains recalled context through the current user turn and acknowledges actual system-context injection with metadata-only receipts.
+
+### Fixed
+
+- Ordinary Markdown lists containing durable decisions, requirements, and preferences are no longer rejected as patches solely because they use dash bullets; structural patch and sensitive-content filters remain in place.
+- OpenCode and Pi execution assets now use the release-pinned Bun toolchain for deterministic generation, rejecting mismatched runtimes before changing generated outputs.
+- Stabilized release verification for RunnerAdapter readiness and TUI model discovery, removing dependence on an ambient Codex installation and fixed rendering delays.
+
+### Security
+
+- Memory requests bind project scope inside Deck's authenticated runtime, reject caller-supplied scope, and keep projects isolated. Missing or invalid scope disables memory effects without blocking coding work.
+- Expanded provider-neutral rejection of credential-bearing managed recall requests and authorization headers before provider calls, with redacted diagnostics. Observability retains only allowlisted metadata rather than raw queries, credentials, provider correlation IDs, or native session and message IDs.
 
 ## [0.3.0] - 2026-08-14
 
@@ -84,7 +105,8 @@ All notable release changes to Deck are recorded here. Current release procedure
 - OpenCode model selection now uses the model inventory resolved by the active runner.
 - Streamlined project documentation and strengthened contributor, architecture, release, and documentation-governance guidance.
 
-[Unreleased]: https://github.com/kevin15011/deck/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/kevin15011/deck/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/kevin15011/deck/releases/tag/v0.4.0
 [0.3.0]: https://github.com/kevin15011/deck/releases/tag/v0.3.0
 [0.2.6]: https://github.com/kevin15011/deck/releases/tag/v0.2.6
 [0.2.5]: https://github.com/kevin15011/deck/releases/tag/v0.2.5

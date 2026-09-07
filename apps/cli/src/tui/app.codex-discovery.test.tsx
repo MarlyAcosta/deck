@@ -14,6 +14,13 @@ import { createDeckConfigStore } from "../deck-config-store";
 
 setDefaultTimeout(30_000);
 
+type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void };
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  return { promise: new Promise<T>((done) => { resolve = done; }), resolve };
+}
+
 function createInkHarness() {
   const chunks: Array<Buffer | null> = [];
   const stdin = new EventEmitter() as EventEmitter & { isTTY: boolean; setRawMode(): void; setEncoding(): void; read(): Buffer | null; ref(): void; unref(): void };
@@ -38,16 +45,57 @@ function createInkHarness() {
   };
 }
 
-async function waitFor(instance: { waitUntilRenderFlush(): Promise<unknown> }, predicate: () => boolean, label: string, details?: () => string) {
-  const deadline = Date.now() + 5_000;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${label}${details ? `: ${details()}` : ""}`);
-    await instance.waitUntilRenderFlush();
+const RENDER_WAIT_TIMEOUT_MS = 5_000;
+const DIAGNOSTIC_TAIL_LENGTH = 2_048;
+
+function tail(value: string): string {
+  return value.slice(-DIAGNOSTIC_TAIL_LENGTH);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function waitForRenderFlush(
+  instance: { waitUntilRenderFlush(): Promise<unknown> },
+  label: string,
+  details?: () => string,
+  timeoutMs = RENDER_WAIT_TIMEOUT_MS,
+) {
+  await withTimeout(
+    instance.waitUntilRenderFlush(),
+    timeoutMs,
+    `Render flush timed out while waiting for ${label}${details ? `: ${details()}` : ""}`,
+  );
+}
+
+async function waitFor(instance: { waitUntilRenderFlush(): Promise<unknown> }, predicate: () => boolean, label: string, details?: () => string, timeoutMs = RENDER_WAIT_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    if (predicate()) return;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw new Error(`Timed out after ${timeoutMs}ms waiting for ${label}${details ? `: ${details()}` : ""}`);
+    await waitForRenderFlush(instance, label, details, remainingMs);
   }
 }
 
 async function waitForFresh(instance: { waitUntilRenderFlush(): Promise<unknown> }, output: () => string, boundary: number, text: string) {
-  await waitFor(instance, () => output().slice(boundary).includes(text), `fresh ${text}`);
+  await waitFor(
+    instance,
+    () => output().slice(boundary).includes(text),
+    `fresh ${text}`,
+    () => `boundary=${boundary}; fresh tail=${JSON.stringify(tail(output().slice(boundary)))}; complete tail=${JSON.stringify(tail(output()))}`,
+  );
 }
 
 function testConfigStore(projectRoot: string) {
@@ -81,6 +129,8 @@ describe("DeckApp Codex discovery composition", () => {
     ].join("\n"));
     const inventoryRequests: Array<{ projectRoot: string; mode?: string }> = [];
     const commandRequests: Array<readonly string[]> = [];
+    const bundledDiscoveryRequested = deferred<void>();
+    const retryInventoryRequested = deferred<void>();
     const catalog = JSON.stringify({
       models: [{
         slug: "gpt-5.6-terra",
@@ -100,6 +150,7 @@ describe("DeckApp Codex discovery composition", () => {
         commandRunner: {
           async run(request) {
             commandRequests.push(request.args);
+            if (commandRequests.length === 2) bundledDiscoveryRequested.resolve(undefined);
             return commandRequests.length === 1
               ? { exitCode: 1, signal: null, stdout: "", stderr: "authenticated catalog unavailable" }
               : { exitCode: 0, signal: null, stdout: catalog, stderr: "" };
@@ -110,6 +161,7 @@ describe("DeckApp Codex discovery composition", () => {
     const discover = adapter.getModelInventory.bind(adapter);
     adapter.getModelInventory = async (request: { projectRoot: string; mode?: string }) => {
       inventoryRequests.push(request);
+      if (inventoryRequests.length === 2) retryInventoryRequested.resolve(undefined);
       return discover(request);
     };
     const harness = createInkHarness();
@@ -122,18 +174,18 @@ describe("DeckApp Codex discovery composition", () => {
       await waitFor(instance, () => harness.output().includes("Your AI environment, configured."), "home menu");
       for (let index = 0; index < 3; index++) {
         harness.input("j");
-        await instance.waitUntilRenderFlush();
+        await waitForRenderFlush(instance, `Codex model menu cursor redraw ${index + 1}`);
       }
       harness.input("\r");
       await waitFor(instance, () => harness.output().includes("Select which runner/environment owns the model configuration."), "model runner selection");
       for (let index = 0; index < 3; index++) {
         harness.input("j");
-        await instance.waitUntilRenderFlush();
+        await waitForRenderFlush(instance, `Codex runner cursor redraw ${index + 1}`);
       }
       harness.input("\r");
       await waitFor(instance, () => harness.output().includes("Select which team you want to configure for codex-development."), "Codex team selection");
       harness.input("\r");
-      await waitFor(instance, () => commandRequests.length === 2, "primary and bundled Codex discovery requests");
+      await withTimeout(bundledDiscoveryRequested.promise, RENDER_WAIT_TIMEOUT_MS, "Timed out waiting for primary and bundled Codex discovery requests");
       await waitFor(instance, () => harness.output().includes("Codex bundled models are not active-account availability."), "bundled degradation screen");
       expect(harness.output()).toContain("codex-bundled-fallback");
       expect(harness.output()).not.toContain("Select an agent to configure");
@@ -141,7 +193,7 @@ describe("DeckApp Codex discovery composition", () => {
 
       const retryBoundary = harness.output().length;
       harness.input("\r");
-      await waitFor(instance, () => inventoryRequests.length === 2, "Codex retry request");
+      await withTimeout(retryInventoryRequested.promise, RENDER_WAIT_TIMEOUT_MS, "Timed out waiting for Codex retry request");
       expect(inventoryRequests[1]).toMatchObject({ projectRoot, mode: "rescan" });
       await waitFor(instance, () => harness.output().includes("Select an agent to configure"), "editable active-account models");
       expect(harness.output().slice(retryBoundary)).not.toContain("Codex bundled models are not active-account availability.");
@@ -155,9 +207,12 @@ describe("DeckApp Codex discovery composition", () => {
       await waitFor(instance, () => harness.output().includes("Select a model for OpenAI Subscription / Codex"), "Codex model selection");
     } finally {
       instance.unmount();
-      await instance.waitUntilExit();
-      harness.close();
-      rmSync(projectRoot, { recursive: true, force: true });
+      try {
+        await withTimeout(instance.waitUntilExit(), RENDER_WAIT_TIMEOUT_MS, `Ink exit timed out after ${RENDER_WAIT_TIMEOUT_MS}ms`);
+      } finally {
+        harness.close();
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
     }
   });
 
@@ -205,25 +260,25 @@ describe("DeckApp Codex discovery composition", () => {
       await waitFor(instance, () => harness.output().includes("Your AI environment, configured."), "home menu");
       for (let index = 0; index < 6; index++) {
         harness.input("k");
-        await instance.waitUntilRenderFlush();
+        await waitForRenderFlush(instance, `Dashboard home cursor redraw ${index + 1}`);
       }
       harness.input("\r");
       await waitFor(instance, () => harness.output().includes("Choose one or more environments."), "environment selection");
       for (let index = 0; index < 3; index++) {
         harness.input("j");
-        await instance.waitUntilRenderFlush();
+        await waitForRenderFlush(instance, `Dashboard environment cursor redraw ${index + 1}`);
       }
       harness.input(" ");
-      await instance.waitUntilRenderFlush();
+      await waitForRenderFlush(instance, "Dashboard environment selection toggle");
       harness.input("\r");
       await waitFor(instance, () => harness.output().includes("Choose Lead personality"), "personality selection");
       const dashboardBoundary = harness.output().length;
-       harness.input("\r");
-       await instance.waitUntilRenderFlush();
-       await waitForFresh(instance, harness.output, dashboardBoundary, "Codex CLI Runner Setup Dashboard");
-       for (let index = 0; index < 4; index++) {
+      harness.input("\r");
+      await waitForRenderFlush(instance, "Codex dashboard initial render");
+      await waitForFresh(instance, harness.output, dashboardBoundary, "Codex CLI Runner Setup Dashboard");
+      for (let index = 0; index < 4; index++) {
         harness.input("j");
-        await instance.waitUntilRenderFlush();
+        await waitForRenderFlush(instance, `Dashboard action cursor redraw ${index + 1}`);
       }
       const reviewBoundary = harness.output().length;
       harness.input("\r");
@@ -233,12 +288,12 @@ describe("DeckApp Codex discovery composition", () => {
       expect(harness.output()).not.toContain("DASHBOARD ERROR");
       expect(applyCalls).toBe(0);
 
-       const backBoundary = harness.output().length;
-       harness.input("\u001b");
-       await waitForFresh(instance, harness.output, backBoundary, "Codex CLI Runner Setup Dashboard");
-       for (let index = 0; index < 4; index++) {
+      const backBoundary = harness.output().length;
+      harness.input("\u001b");
+      await waitForFresh(instance, harness.output, backBoundary, "Codex CLI Runner Setup Dashboard");
+      for (let index = 0; index < 4; index++) {
         harness.input("j");
-        await instance.waitUntilRenderFlush();
+        await waitForRenderFlush(instance, `Dashboard retry cursor redraw ${index + 1}`);
       }
       const retryBoundary = harness.output().length;
       harness.input("\r");
@@ -247,9 +302,22 @@ describe("DeckApp Codex discovery composition", () => {
       expect(harness.output()).not.toContain("DASHBOARD ERROR");
     } finally {
       instance.unmount();
-      await instance.waitUntilExit();
-      harness.close();
-      rmSync(projectRoot, { recursive: true, force: true });
+      try {
+        await withTimeout(instance.waitUntilExit(), RENDER_WAIT_TIMEOUT_MS, `Ink exit timed out after ${RENDER_WAIT_TIMEOUT_MS}ms`);
+      } finally {
+        harness.close();
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
     }
+  });
+
+  test("bounded render waits fail with diagnostics when no render progress can occur", async () => {
+    await expect(waitFor(
+      { waitUntilRenderFlush: () => new Promise(() => {}) },
+      () => false,
+      "hung Codex render",
+      () => "fixture output",
+      5,
+    )).rejects.toThrow(/Render flush timed out while waiting for hung Codex render.*fixture output/s);
   });
 });

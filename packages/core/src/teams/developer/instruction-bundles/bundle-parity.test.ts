@@ -28,9 +28,9 @@ function hash(s: string): number {
  */
 const BASELINE_HASHES: Record<string, Record<string, number>> = {
   "adaptive-memory": {
-    agent: -1572652701, // Runtime owns project scope; raw provider MCP is not materialized for project memory
-    session: -1572652701, // Runtime owns project scope; raw provider MCP is not materialized for project memory
-    skill: -1572652701, // Runtime owns project scope; raw provider MCP is not materialized for project memory
+    agent: -1094390567, // Managed recall rules intentionally added in feat(memory): expose managed project recall; all surfaces share common content
+    session: -1094390567, // Managed recall rules intentionally added in feat(memory): expose managed project recall; all surfaces share common content
+    skill: -1094390567, // Managed recall rules intentionally added in feat(memory): expose managed project recall; all surfaces share common content
   },
   "codebase-memory": {
     agent: 392768171,

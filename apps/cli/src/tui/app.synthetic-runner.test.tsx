@@ -584,7 +584,7 @@ describe("DeckApp synthetic runner production flow", () => {
         atlas: {
           "codebase-memory": false,
           "code-economy": true,
-          "context-mode": false,
+          "context-mode": true,
           rtk: true,
           "adaptive-memory": false,
           serena: true,
@@ -675,14 +675,15 @@ describe("DeckApp synthetic runner production flow", () => {
       harness.input("\r");
       await waitForFreshOutput(instance, harness.output, boundary, "Configure Packages — Atlas Runner");
       const packageOutput = harness.output().slice(boundary);
-      expect(packageOutput).toContain("[ ] Context Mode");
+      expect(packageOutput).toContain("[x] Context Mode");
+      expect(packageOutput).toContain("Code Economy is always enabled as the baseline.");
       for (const label of ["Codebase Memory", "RTK", "Adaptive Memory", "Serena", "[ ] Code Economy"]) {
         expect(packageOutput).not.toContain(label);
       }
 
       harness.input(" ");
       await instance.waitUntilRenderFlush();
-      expect(harness.output()).toContain("[x] Context Mode");
+      expect(harness.output()).toContain("[ ] Context Mode");
       harness.input("j");
       await instance.waitUntilRenderFlush();
       boundary = harness.output().length;
@@ -690,14 +691,14 @@ describe("DeckApp synthetic runner production flow", () => {
       await waitForFreshOutput(instance, harness.output, boundary, "Package instructions applied.");
 
       const persisted = configStore.read();
-      expect(getEnabledPackageInstructionIds(persisted, "atlas")).toEqual(["code-economy", "context-mode"]);
+      expect(getEnabledPackageInstructionIds(persisted, "atlas")).toEqual(["code-economy"]);
       expect(persisted.packageInstructions.atlas).toMatchObject({
         "code-economy": true,
-        "context-mode": true,
+        "context-mode": false,
         rtk: false,
         serena: false,
       });
-      expect(capturedBundle).toEqual(buildCapabilityInstructionBundle(["code-economy", "context-mode"]));
+      expect(capturedBundle).toEqual(buildCapabilityInstructionBundle(["code-economy"]));
     } finally {
       instance.unmount();
       await instance.waitUntilExit();

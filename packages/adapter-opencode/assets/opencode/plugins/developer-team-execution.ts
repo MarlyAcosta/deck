@@ -291,7 +291,7 @@ function memoryEvent(base: Record<string, unknown>): Record<string, unknown> {
 }
 
 type LogicalUserTurnV1 = Readonly<{ sessionId: string; messageId: string; turnKey: string }>;
-type ModelContextSnapshotV1 = Readonly<{ turnKey: string; generation: number; context?: string }>;
+type ModelContextSnapshotV1 = Readonly<{ sessionId: string; logicalTurnId: string; turnKey: string; generation: number; context?: string }>;
 
 function trustedMessageId(value: unknown): string | undefined {
   return typeof value === "string" && /^[^\0\r\n]{1,160}$/.test(value) ? value : undefined;
@@ -322,6 +322,13 @@ function textMetadata(value: string | undefined): Record<string, unknown> {
   return {
     queryByteLength: Buffer.byteLength(value, "utf8"),
     querySha256: `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`,
+  };
+}
+
+function injectedTextMetadata(value: string): Record<string, unknown> {
+  return {
+    injectedByteCount: Buffer.byteLength(value, "utf8"),
+    injectedSha256: createHash("sha256").update(value, "utf8").digest("hex"),
   };
 }
 
@@ -474,13 +481,15 @@ export function createOpenCodeDeveloperTeamExecutionPluginV1(options: OpenCodeDe
   const beginModelContextRecall = (turn: LogicalUserTurnV1): number => {
     const generation = ++nextModelContextGeneration;
     modelContextGenerations.set(turn.sessionId, generation);
-    activeModelContexts.set(turn.sessionId, Object.freeze({ turnKey: turn.turnKey, generation }));
+    activeModelContexts.set(turn.sessionId, Object.freeze({ sessionId: turn.sessionId, logicalTurnId: turn.messageId, turnKey: turn.turnKey, generation }));
     return generation;
   };
   const installModelContext = (turn: LogicalUserTurnV1, generation: number, context: string | undefined) => {
     const active = activeModelContexts.get(turn.sessionId);
     if (!active || active.turnKey !== turn.turnKey || active.generation !== generation || modelContextGenerations.get(turn.sessionId) !== generation) return;
     activeModelContexts.set(turn.sessionId, Object.freeze({
+      sessionId: turn.sessionId,
+      logicalTurnId: turn.messageId,
       turnKey: turn.turnKey,
       generation,
       ...(context ? { context } : {}),
@@ -535,9 +544,18 @@ export function createOpenCodeDeveloperTeamExecutionPluginV1(options: OpenCodeDe
       "experimental.chat.system.transform": async (input: OpenCodeSystemTransformInput, output: OpenCodeSystemTransformOutput) => {
         if (!input.sessionID) return;
         if (latestRequestMarkers.get(input.sessionID)?.kind !== "normal") return;
-        const contexts = activeModelContexts.get(input.sessionID)?.context;
-        if (!contexts) return;
-        output.system.push(contexts);
+        const snapshot = activeModelContexts.get(input.sessionID);
+        if (!snapshot?.context) return;
+        output.system.push(snapshot.context);
+        const ackDigest = managedRecallDigest(`${snapshot.sessionId}\0${snapshot.logicalTurnId}\0${snapshot.generation}\0${snapshot.context}\0${randomUUID()}`);
+        await sendMemoryLoopback(memoryLoopback, memoryEvent({
+          eventId: `deck-injection-ack-${ackDigest.slice(0, 32)}`,
+          event: "injection_ack",
+          sessionId: snapshot.sessionId,
+          logicalTurnId: snapshot.logicalTurnId,
+          snapshotGeneration: snapshot.generation,
+          ...injectedTextMetadata(snapshot.context),
+        }));
       },
       "chat.message": async (input: OpenCodePluginInput, output: OpenCodePluginOutput) => {
         receipts.set(input.sessionID, receiptDigest(input, output));
@@ -557,14 +575,20 @@ export function createOpenCodeDeveloperTeamExecutionPluginV1(options: OpenCodeDe
               event: "session_start",
               sessionId: turn.sessionId,
               messageId: turn.messageId,
+              logicalTurnId: turn.messageId,
+              snapshotGeneration: generation,
               role: roleForMemory,
               query: text,
               ...textMetadata(text),
             })));
           }
         }
-        if (text && messageRole === "user" && messageId) await sendMemoryLoopback(memoryLoopback, memoryEvent({ eventId: `${input.sessionID}:${messageId}:user_capture`, event: "capture", sessionId: input.sessionID, source: "trusted-user-prompt", content: text, correlationId: messageId }));
-        if (text && messageRole === "assistant" && messageId) await sendMemoryLoopback(memoryLoopback, memoryEvent({ eventId: `${input.sessionID}:${messageId}:assistant_capture`, event: "capture", sessionId: input.sessionID, source: "trusted-final-assistant", content: text, correlationId: messageId }));
+        const activeSnapshot = activeModelContexts.get(input.sessionID);
+        const activeTurnMetadata = activeSnapshot
+          ? { logicalTurnId: activeSnapshot.logicalTurnId, snapshotGeneration: activeSnapshot.generation }
+          : {};
+        if (text && messageRole === "user" && messageId) await sendMemoryLoopback(memoryLoopback, memoryEvent({ eventId: `${input.sessionID}:${messageId}:user_capture`, event: "capture", sessionId: input.sessionID, source: "trusted-user-prompt", content: text, correlationId: messageId, logicalTurnId: turn?.messageId ?? activeSnapshot?.logicalTurnId, snapshotGeneration: activeSnapshot?.generation }));
+        if (text && messageRole === "assistant" && messageId) await sendMemoryLoopback(memoryLoopback, memoryEvent({ eventId: `${input.sessionID}:${messageId}:assistant_capture`, event: "capture", sessionId: input.sessionID, source: "trusted-final-assistant", content: text, correlationId: messageId, ...activeTurnMetadata }));
       },
       "tool.execute.before": async (input: OpenCodePluginInput, output: OpenCodePluginOutput) => {
         const args = output.args;

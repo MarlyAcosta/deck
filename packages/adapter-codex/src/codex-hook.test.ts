@@ -3,6 +3,24 @@ import { forwardCodexTrustedHook } from "../assets/codex/hooks/developer-team-ex
 
 const event = { session_id: "session-1", turn_id: "turn-1", cwd: "/project", hook_event_name: "PreToolUse" };
 
+const MEMORY_LOOPBACK_ENV_KEYS = ["DECK_CODEX_BRIDGE_ENDPOINT", "DECK_CODEX_BRIDGE_TOKEN"] as const;
+
+async function withScrubbedMemoryLoopbackEnv<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const key of MEMORY_LOOPBACK_ENV_KEYS) {
+    previous.set(key, process.env[key]);
+    delete process.env[key];
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 test("trusted Codex hook forwards only bounded released lifecycle events", async () => {
   let calls = 0;
   const output = await forwardCodexTrustedHook(event, {
@@ -34,7 +52,7 @@ test("invalid, tampered, and authority-free hook inputs reject with zero effects
   const post = async () => { calls += 1; return { accepted: true }; };
   expect(await forwardCodexTrustedHook({ ...event, hook_event_name: "PromptClaimedAuthority" }, { endpoint: "http://127.0.0.1", token: "token", post })).toMatchObject({ decision: "block" });
   expect(await forwardCodexTrustedHook({ ...event, session_id: "" }, { endpoint: "http://127.0.0.1", token: "token", post })).toMatchObject({ decision: "block" });
-  expect(await forwardCodexTrustedHook(event, { post })).toEqual({});
+  expect(await withScrubbedMemoryLoopbackEnv(() => forwardCodexTrustedHook(event, { post }))).toEqual({});
   expect(calls).toBe(0);
 });
 

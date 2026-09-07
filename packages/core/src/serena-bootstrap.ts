@@ -29,7 +29,7 @@ export const SERENA_MCP_ARGS = [
 
 /** Fixed bounds for remote content and child diagnostics. */
 export const SERENA_UV_INSTALLER_MAX_BYTES = 1_048_576;
-export const SERENA_UV_INSTALLER_TIMEOUT_MS = 30_000;
+export const SERENA_UV_INSTALLER_TIMEOUT_MS = 120_000;
 export const SERENA_CHILD_TIMEOUT_MS = 120_000;
 export const SERENA_TERMINATION_GRACE_MS = 2_000;
 const SERENA_UV_INSTALLER_MAX_REDIRECTS = 5;

@@ -1,8 +1,10 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 import {
   createCodexRunnerAdapter,
@@ -15,10 +17,19 @@ import { parseCodexModels } from "./codex-model-discovery";
 import { DEVELOPER_TEAM_AGENTS } from "@deck/core/developer-team-catalog";
 import { TAVILY_PROVIDER_DESCRIPTOR } from "@deck/provider-tavily";
 import { buildCapabilityInstructionBundle, getDefaultDeckConfig, validateDeckConfig } from "@deck/core";
+import type { CodexPreflightEffects, CodexProjectSnapshot } from "./preflight";
 
 setDefaultTimeout(30_000);
 
 const TEST_SERENA_EXECUTABLE = "/fixtures/deck-data/tools/serena/bin/serena";
+const OFFLINE_CODEX_PROBE = {
+  found: true,
+  version: "0.146.1",
+  help: "Usage: codex [OPTIONS]\nexec\nresume",
+  execHelp: "Usage: codex exec [OPTIONS]",
+  resumeHelp: "Usage: codex resume [SESSION_ID] --last",
+} as const satisfies Awaited<ReturnType<CodexPreflightEffects["probe"]>>;
+const CODEX_HERMETIC_READINESS_TEST_PATTERN = "separates selected instructions from MCP|reuses validated Deck-owned Serena evidence and blocks a missing launcher";
 
 function readySerenaReadiness(): Extract<import("@deck/core").SerenaExistingReadinessResult, { state: "ready" }> {
   const evidence: import("@deck/core").SerenaReadinessEvidence = {
@@ -79,29 +90,92 @@ async function writeGitOrigin(projectRoot: string): Promise<void> {
   ].join("\n"), "utf8");
 }
 
+async function readFileOrNull(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function listProjectEntries(path: string): Promise<string[]> {
+  try {
+    return (await readdir(path, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() || entry.isFile())
+      .map((entry) => entry.name);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function readRealCodexProject(projectRoot: string): Promise<CodexProjectSnapshot> {
+  return {
+    config: await readFileOrNull(join(projectRoot, ".codex", "config.toml")),
+    roles: await listProjectEntries(join(projectRoot, ".codex", "agents")),
+    skills: await listProjectEntries(join(projectRoot, ".agents", "skills")),
+    agentsInstructions: await Bun.file(join(projectRoot, "AGENTS.md")).exists(),
+  };
+}
+
+function hermeticCodexPreflight(): CodexPreflightEffects {
+  return {
+    probe: async () => ({ ...OFFLINE_CODEX_PROBE }),
+    inspectTrust: async () => "trusted",
+    readProject: readRealCodexProject,
+  };
+}
+
+async function isolatedNoCodexEnvRoot(): Promise<{ root: string; env: NodeJS.ProcessEnv }> {
+  const root = await mkdtemp(join(tmpdir(), "deck-codex-no-cli-child-"));
+  const directories = {
+    PATH: join(root, "empty-bin"),
+    HOME: join(root, "home"),
+    XDG_DATA_HOME: join(root, "data"),
+    XDG_CONFIG_HOME: join(root, "config"),
+    XDG_CACHE_HOME: join(root, "cache"),
+    TMPDIR: join(root, "tmp"),
+  };
+  await Promise.all(Object.values(directories).map((path) => mkdir(path, { recursive: true })));
+  return {
+    root,
+    env: {
+      ...process.env,
+      ...directories,
+      CI: "true",
+      NO_COLOR: "1",
+      LANG: process.env.LANG ?? "C.UTF-8",
+      DECK_CODEX_HERMETIC_CHILD: "1",
+    },
+  };
+}
+
 
 describe("Deck Serena proxy probe", () => {
-  test("accepts a delayed proxy under the bounded startup timeout and reports a hung proxy as indeterminate", async () => {
-    const root = await mkdtemp(join(tmpdir(), "deck-serena-proxy-probe-"));
-    const readyFixture = join(root, "deck-ready");
-    const hungFixture = join(root, "deck-hung");
-    try {
-      await writeFile(readyFixture, "#!/bin/sh\nsleep 0.1\nprintf 'deck-serena-mcp-proxy-v1\\n'\n", "utf8");
-      await writeFile(hungFixture, "#!/bin/sh\nwhile :; do :; done\n", "utf8");
-      await Promise.all([chmod(readyFixture, 0o755), chmod(hungFixture, 0o755)]);
+  test("accepts probe success and reports bounded timeouts through its injectable process boundary", async () => {
+    const timedOut = Object.assign(new Error("fixture timeout"), { code: "ETIMEDOUT" });
+    const requests: import("./runner-adapter").DeckSerenaProxyProbeRequest[] = [];
+    const outcomes: import("./runner-adapter").DeckSerenaProxyProbeResult[] = [
+      { status: 0, stdout: "deck-serena-mcp-proxy-v1\n" },
+      { error: timedOut, signal: "SIGTERM", stdout: "" },
+    ];
+    const probe = createDeckSerenaProxyProbe({
+      timeoutMs: 100.8,
+      run: (request) => {
+        requests.push(request);
+        return outcomes.shift() ?? { status: 1, stdout: "" };
+      },
+    });
 
-      const ready = await createDeckSerenaProxyProbe({ command: readyFixture })();
-      const startedAt = Date.now();
-      const hung = await createDeckSerenaProxyProbe({ command: hungFixture, timeoutMs: 100 })();
-
-      expect(SERENA_PROXY_PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(1_000);
-      expect(ready).toEqual({ state: "ready" });
-      expect(hung).toMatchObject({ state: "indeterminate", message: expect.stringContaining("bounded check") });
-      expect(Date.now() - startedAt).toBeLessThan(1_000);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  }, 30_000);
+    expect(await probe()).toEqual({ state: "ready" });
+    expect(await probe()).toMatchObject({ state: "indeterminate", message: expect.stringContaining("bounded check") });
+    expect(SERENA_PROXY_PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(1_000);
+    expect(requests).toEqual([
+      { command: "deck", args: ["internal", "serena-mcp", "--probe"], timeoutMs: 100, maxOutputBytes: 4 * 1024 },
+      { command: "deck", args: ["internal", "serena-mcp", "--probe"], timeoutMs: 100, maxOutputBytes: 4 * 1024 },
+    ]);
+  });
 
 
   test("uses fixed probe argv and bounded output through its injectable process boundary", async () => {
@@ -769,6 +843,7 @@ describe("Codex RunnerAdapter production composition", () => {
       await writeGitOrigin(projectRoot);
       const adapter = createCodexRunnerAdapter({
         journalRoot,
+        preflight: hermeticCodexPreflight(),
         mcpCapabilityIds: ["context7"],
         sharedBinaryUsability: async (command) => ({ status: "ready", command }),
         serenaReadinessResolver: async () => readySerenaReadiness(),
@@ -840,6 +915,7 @@ describe("Codex RunnerAdapter production composition", () => {
     try {
       const ready = createCodexRunnerAdapter({
         journalRoot,
+        preflight: hermeticCodexPreflight(),
         serenaReadinessResolver: async () => {
           const readiness = readySerenaReadiness();
           return {
@@ -939,6 +1015,34 @@ describe("Codex RunnerAdapter production composition", () => {
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
       await rm(journalRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("runs readiness install coverage in an isolated child process with no Codex executable on PATH", async () => {
+    if (process.env.DECK_CODEX_HERMETIC_CHILD === "1") return;
+    const { root, env } = await isolatedNoCodexEnvRoot();
+    try {
+      const missingCodex = spawnSync("codex", ["--version"], { env, encoding: "utf8" });
+      expect((missingCodex.error as NodeJS.ErrnoException | undefined)?.code).toBe("ENOENT");
+
+      const child = spawnSync(process.execPath, [
+        "test",
+        fileURLToPath(import.meta.url),
+        "--test-name-pattern",
+        CODEX_HERMETIC_READINESS_TEST_PATTERN,
+      ], {
+        cwd: process.cwd(),
+        env,
+        encoding: "utf8",
+      });
+
+      expect({ error: child.error?.message, signal: child.signal, status: child.status, stderr: child.stderr, stdout: child.stdout }).toMatchObject({
+        error: undefined,
+        signal: null,
+        status: 0,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 
