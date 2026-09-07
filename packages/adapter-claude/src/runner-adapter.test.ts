@@ -175,20 +175,41 @@ describe("ClaudeRunnerAdapter models (real reuse of @deck/core's anthropic catal
   });
 });
 
-describe("ClaudeRunnerAdapter Phase 3/4 surfaces throw with a clear phase pointer instead of fabricating data", () => {
-  test.each([
-    ["buildReviewPlan", () => new ClaudeRunnerAdapter().buildReviewPlan(undefined as never, undefined as never)],
-    ["buildInstallationPlan", () => new ClaudeRunnerAdapter().buildInstallationPlan(undefined as never)],
-    ["getNextScreen", () => new ClaudeRunnerAdapter().getNextScreen(undefined as never)],
-  ])("%s throws referencing tasks.md", (name, call) => {
-    expect(call).toThrow(/not implemented yet.*add-claude-code-runner-support\/tasks\.md/s);
+describe("ClaudeRunnerAdapter TUI dashboard surfaces — Phase 6, real (not stubs)", () => {
+  test("buildReviewPlan is unconditionally ready, with one team-application and one validation action, given today's all-optional/all-unblocked capability catalog", () => {
+    const adapter = new ClaudeRunnerAdapter();
+    const inventory = { runnerId: "claude", environmentId: "claude-development", capabilities: [] };
+    const state = { runnerId: "claude", environmentId: "claude-development", selectedCapabilities: {}, packageInstructions: {}, adaptiveMemory: { provider: "none" as const } };
+    const plan = adapter.buildReviewPlan(state, inventory);
+    expect(plan.ready).toBe(true);
+    expect(plan.groups.teamApplications).toEqual([{ id: "claude-developer-team", kind: "apply-team-bundle", title: "Apply and verify Claude Developer Team content", capabilityId: "developer-team", status: "ready", required: true }]);
+    expect(plan.groups.validations.length).toBe(1);
+    expect(plan.groups.manualSteps).toEqual([]);
+    expect(plan.groups.configWrites).toEqual([]);
   });
 
-  test.each([
-    ["runAction", () => new ClaudeRunnerAdapter().runAction(undefined as never, undefined as never)],
-    ["reviewTools", () => new ClaudeRunnerAdapter().reviewTools()],
-  ])("%s (async) rejects referencing tasks.md", async (name, call) => {
-    await expect(call()).rejects.toThrow(/not implemented yet.*add-claude-code-runner-support\/tasks\.md/s);
+  test("buildInstallationPlan returns at least one step, never throws", () => {
+    const adapter = new ClaudeRunnerAdapter();
+    const state = { runnerId: "claude", environmentId: "claude-development", selectedCapabilities: {}, packageInstructions: {}, adaptiveMemory: { provider: "none" as const } };
+    expect(adapter.buildInstallationPlan(state).steps.length).toBeGreaterThan(0);
+  });
+
+  test("runAction always returns an informational result — real Developer Team effects apply through applyDeveloperTeamInstall, not this method", async () => {
+    const adapter = new ClaudeRunnerAdapter();
+    const result = await adapter.runAction({ id: "x", kind: "anything", title: "x", status: "ready" }, { projectRoot: "/p", runnerId: "claude", environmentId: "claude-development" });
+    expect(result.status).toBe("informational");
+  });
+
+  test("getNextScreen mirrors Codex's pass-through: preflight-checking advances to team-selection, everything else is unchanged", () => {
+    const adapter = new ClaudeRunnerAdapter();
+    expect(adapter.getNextScreen({ currentScreen: "preflight-checking", runnerId: "claude", environmentId: "claude-development" })).toBe("team-selection");
+    expect(adapter.getNextScreen({ currentScreen: "complete", runnerId: "claude", environmentId: "claude-development" })).toBe("complete");
+  });
+
+  test("reviewTools resolves without throwing (its return value is stored by the TUI but never rendered)", async () => {
+    const adapter = new ClaudeRunnerAdapter();
+    const result = await adapter.reviewTools() as { runnerId?: string };
+    expect(result.runnerId).toBe("claude");
   });
 });
 

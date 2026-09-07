@@ -120,3 +120,15 @@ events:
       - "Recorded a testing-process near-miss: bun run --cwd apps/cli caused resolveProjectRoot() to resolve to the real repo checkout itself, briefly writing untracked files into it -- caught via git status same-turn, removed safely."
       - "Verified end-to-end through the real deck binary against the real authenticated claude process: dry-run, install-only apply, and exec -- \"prompt\" all confirmed working (is_error: false)."
       - "cli-args.test.ts 59/59 pass; adapter-claude 120/120 pass; full suite (4742/24/3, 315 files) diff against a stash-based baseline is byte-for-byte identical; tsc clean."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-08-29"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Phase 6 (interactive TUI dashboard integration) complete -- added on explicit user request to make Claude selectable/installable through deck's interactive menu, not just the direct CLI command."
+      - "Found the menu label was already real (buildEnvironmentMenuOptions overwrites the static placeholder for any registered adapter); the actual blocker was reviewTools() throwing, caught by composeRegisteredRunnerDashboard, showing a generic error."
+      - "Repo-wide grep showed only buildReviewPlan and reviewTools have real production call sites; buildInstallationPlan/getNextScreen are unused, runAction only fires for capabilityId==='serena' which Claude's catalog never selects. Implemented all five for real; removed the now-fully-dead notYetImplemented() helper -- every RunnerAdapter method is real."
+      - "Verified by reproducing composeRegisteredRunnerDashboard's exact call sequence plus the full installTeamBundle apply sequence against a real scratch project: succeeded without throwing, ready:true, 15-file install. adapter-claude 120/120 pass; full suite (4742/24/3, 315 files) matches the known baseline exactly; tsc clean."

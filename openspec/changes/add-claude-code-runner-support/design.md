@@ -340,6 +340,50 @@ result (per this session's own standing discipline), confirmed every added path 
 `--cwd`, confirmed correct via a one-line `resolveProjectRoot()` probe script before trusting
 any further apply.
 
+## Interactive TUI dashboard (CONFIRMED in Phase 6)
+
+The user explicitly asked for the interactive `deck` menu to work for Claude, not just the
+direct CLI command — "no que quede como placeholder." Investigated with a dedicated research
+pass over `apps/cli/src/tui/app.tsx` (a large Ink/React file) before writing anything, rather
+than assumed. Two findings that changed the shape of the work:
+
+**The menu label was already real, not the actual blocker.** `menu-options.ts`'s
+`"claude-development"` entry is a static `(placeholder)` string, but
+`apps/cli/src/tui/runner-options.ts`'s `buildEnvironmentMenuOptions()` overwrites any base entry
+whose `value` matches a registered adapter's `environmentIds` — since Claude has been registered
+since Phase 1, the menu has shown a real, adapter-driven label since then. The actual blocker was
+behavioral: selecting it invoked `reviewTools()`, which threw (a Phase 1–5 stub), caught by
+`composeRegisteredRunnerDashboard`'s try/catch, surfacing a generic dashboard-preflight error
+instead of a working review screen.
+
+**Only one of the five remaining stub methods has real production logic to write.** Repo-wide
+grep (not the type signatures alone) showed `buildInstallationPlan` and `getNextScreen` have
+zero call sites in `apps/cli/src` outside adapter unit tests; `runAction` is invoked only for
+`capabilityId === "serena"` actions, which Claude's capability catalog never emits (`serena` is
+`status: "gap"`); `reviewTools()`'s return value is stored in TUI state but never rendered
+anywhere. Only `buildReviewPlan` (called by `dashboardPlanBuilder`) has a real consumer. This
+made the actual required work much smaller than Codex's ~110-line `buildReviewPlan` might
+suggest is normal — Claude's version is ~15 lines, correctly so, because `CLAUDE_CAPABILITY_CATALOG`
+has no required/blocked entries yet for any of Codex's manual-step/config-write branching to
+apply to. This will need revisiting once Phase 4's deferred MCP capability-driven selection
+(context-mode, codebase-memory, Serena, Context7, Supermemory, web-search) actually exists.
+
+**The apply path needed zero new code.** `app.tsx`'s `installTeamBundle` — the function that
+actually writes files when a user confirms the review screen — is fully generic and already
+calls `buildDeveloperTeamInstallPlan`/`backupDeveloperTeamFiles`/`applyDeveloperTeamInstall`/
+`verifyDeveloperTeamInstall`, all real since Phase 3. Wiring the dashboard only required making
+the five *planning/review* methods stop throwing; the *execution* path was never Claude-specific
+work to begin with.
+
+**Verification approach and its honest limit:** a script directly reproduced
+`composeRegisteredRunnerDashboard`'s real parallel call sequence
+(`detectRuntimes`/`inspectProject`/`reviewTools`/`getCapabilityInventory`), then
+`dashboardPlanBuilder`'s `buildReviewPlan` call, then the full `installTeamBundle` sequence,
+against a real scratch project — confirming the exact chain the interactive TUI runs completes
+without throwing and produces a ready, working install. This is not the same as a human clicking
+through the real Ink terminal screens, which isn't practical to automate from a non-interactive
+shell; that gap is recorded honestly in tasks.md rather than implied covered.
+
 ## Deferred: trusted execution boundary
 
 Codex's design required identifying a trusted runner-host bridge (dossier continuity, one-use

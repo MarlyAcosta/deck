@@ -437,9 +437,76 @@ any operation that touches a working tree is a real, load-bearing habit and not 
   stash-based pre-Phase-5 baseline is byte-for-byte identical (exit 0): zero regressions,
   including in the shared `cli-args.ts` this phase touched. `tsc --noEmit`: 0 new errors.
 
-## Phase 6: Documentation and hardening
+## Phase 6: Interactive TUI dashboard integration — COMPLETE (not in the original plan; added on
+explicit user request to make Claude selectable and installable through `deck`'s interactive
+menu, not just the direct `deck claude developer` command)
 
-### Task 6.1: Update support documentation
+**Why this phase exists:** Phase 5 made Claude reachable via a direct CLI command. The user then
+asked specifically for the *interactive* `deck` menu experience — selecting "Claude Code" from
+the TUI the way OpenCode already works — not to remain effectively a placeholder. Investigated
+(via a dedicated Explore pass over `apps/cli/src/tui/app.tsx`, a large Ink/React file, before
+writing anything) rather than assumed: the environment-selection menu already listed Claude
+correctly (`buildEnvironmentMenuOptions` in `apps/cli/src/tui/runner-options.ts` overwrites
+`menu-options.ts`'s static placeholder with real registered-adapter data — confirmed this was
+already true, not something to build). The actual blocker was that selecting it hit `reviewTools()`
+throwing, caught by `composeRegisteredRunnerDashboard`'s try/catch (`app.tsx:1932-2060`), showing
+a generic dashboard-preflight error instead of a working review screen.
+
+### Task 6.1: Implement the five TUI-flow `RunnerAdapter` methods for real — DONE
+
+- Confirmed by repo-wide grep, not assumption, exactly which of the five methods
+  (`buildReviewPlan`, `buildInstallationPlan`, `runAction`, `getNextScreen`, `reviewTools`) are
+  actually exercised by production code: only `buildReviewPlan` (via `dashboardPlanBuilder`,
+  `app.tsx:1082-1085`) and `reviewTools` (called but its result never rendered) are called at
+  all; `buildInstallationPlan` and `getNextScreen` have zero production call sites;
+  `runAction` is only invoked for `capabilityId === "serena"` actions, which Claude's capability
+  catalog never emits since `serena` is `status: "gap"`.
+- `buildReviewPlan` implemented for real, deliberately simpler than Codex's ~110-line version:
+  since nothing in `CLAUDE_CAPABILITY_CATALOG` is ever `requirementLevel: "required"` or
+  `isBlocked: true` yet, none of Codex's manual-step/blocked-capability/MCP-config-preview
+  branching applies — one `apply-team-bundle` action, one `validate` action, `ready: true`
+  unconditionally. Flagged in a code comment as needing revisit once Phase 4's deferred
+  MCP-capability-driven selection is actually built.
+- `buildInstallationPlan`, `runAction`, `getNextScreen`, `reviewTools` implemented as minimal,
+  honest mirrors of Codex's own equally-inert versions for these specific methods (not stubs —
+  real, defined, non-throwing behavior; just genuinely simple because nothing more is exercised
+  today).
+- The actual apply work needs zero new Claude code: `app.tsx`'s `installTeamBundle`
+  (`1535-1584`) is 100% generic and already calls `buildDeveloperTeamInstallPlan`,
+  `backupDeveloperTeamFiles`, `applyDeveloperTeamInstall`, `verifyDeveloperTeamInstall` — all
+  real since Phase 3.
+- Removed the now-fully-dead `notYetImplemented()` helper and its stale file-header comment:
+  `ClaudeRunnerAdapter` implements every single `RunnerAdapter` method for real as of this
+  phase — confirmed by grep, zero remaining call sites.
+
+**Verification:** `packages/adapter-claude/src/runner-adapter.test.ts`'s "Phase 3/4 surfaces
+throw" test block (testing that these 5 methods threw) was replaced with real-behavior tests:
+`buildReviewPlan` returns `ready: true` with the expected single team-application/validation
+action pair on today's catalog; `buildInstallationPlan` returns a non-empty step list;
+`runAction` returns `status: "informational"`; `getNextScreen` matches Codex's exact pass-through
+semantics; `reviewTools` resolves with `runnerId: "claude"`. A separate script directly
+reproduced `composeRegisteredRunnerDashboard`'s actual parallel call sequence
+(`detectRuntimes`/`inspectProject`/`reviewTools`/`getCapabilityInventory`) followed by
+`dashboardPlanBuilder`'s `buildReviewPlan` call and the full generic
+`installTeamBundle` sequence (`buildDeveloperTeamInstallPlan` → `backupDeveloperTeamFiles` →
+`applyDeveloperTeamInstall` → `verifyDeveloperTeamInstall`) against a real scratch project — the
+exact sequence the interactive TUI runs — and it completed without throwing, with
+`reviewPlan.ready: true` and a successful 15-file install. `bun test packages/adapter-claude`:
+120/120 pass. Full `bun test`: 4742 pass / 24 fail / 3 errors across 315 files, matching the
+known-good baseline exactly (this phase touched zero files outside
+`packages/adapter-claude`). `tsc --noEmit`: 0 new errors.
+
+**Known remaining limit, honestly recorded rather than implied fixed:** actually driving the
+live Ink terminal UI end-to-end (real keypresses through the real screens) was not done — Ink
+TUIs aren't practical to drive from a non-interactive shell. Verification instead directly
+reproduced the exact function-call sequence the TUI's own dashboard-composition and
+action-runner code makes, confirmed by reading that code first rather than guessing at it. This
+is a materially stronger claim than "the adapter methods don't throw in isolation," but it is
+not the same as a human clicking through the real menu.
+
+## Phase 7: Documentation and hardening
+
+### Task 7.1: Update support documentation
 
 - Update `docs/runners.md`, `docs/runner-support.md`, `docs/reference/support-matrix.md` to
   reflect Claude's actual, earned status (`static-compatible`, not full parity) per
@@ -448,7 +515,7 @@ any operation that touches a working tree is a real, load-bearing habit and not 
 **Verification:** `deck skill-registry`/documentation-governance tests (see
 `tests/documentation-governance.test.ts`) pass against the updated docs.
 
-### Task 6.2: Full regression gate
+### Task 7.2: Full regression gate
 
 - Run `bun test` (full suite), typecheck, and build across the monorepo.
 
