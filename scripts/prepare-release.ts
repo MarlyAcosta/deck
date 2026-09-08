@@ -642,16 +642,20 @@ async function runInteractive(args: CliArgs): Promise<ReleaseJson> {
  * Per REQ-RM-005: "Release preparation scripts MUST NOT silently preserve
  * stale commit metadata."
  */
-function validateBuildInfoStaleness(explicitCommit?: string): void {
-  const buildInfoPath = join(process.cwd(), "apps/cli/src/runtime/build-info.generated.ts");
+function validateBuildInfoStaleness(
+  explicitCommit?: string,
+  buildInfoPath?: string,
+): void {
+  const resolvedPath =
+    buildInfoPath ?? join(process.cwd(), "apps/cli/src/runtime/build-info.generated.ts");
 
-  if (!existsSync(buildInfoPath)) {
+  if (!existsSync(resolvedPath)) {
     // Build info file doesn't exist - this is expected for dev builds
     // Skip validation in this case
     return;
   }
 
-  const buildInfoContent = readFileSync(buildInfoPath, "utf-8");
+  const buildInfoContent = readFileSync(resolvedPath, "utf-8");
 
   // Extract commit from build-info.generated.ts (pattern: commit: "xxxx")
   const commitMatch = buildInfoContent.match(/commit:\s*"([^"]+)"/);
@@ -696,7 +700,11 @@ function writeOutput(descriptor: ReleaseJson, out: string | undefined): void {
   }
 }
 
-export async function main(argv: readonly string[]): Promise<number> {
+/** Programmatic callers may supply isolated metadata; the CLI uses the checkout-relative path. */
+export async function main(
+  argv: readonly string[],
+  options?: { buildInfoPath?: string },
+): Promise<number> {
   try {
     const args = parseCliArgs(argv);
 
@@ -713,7 +721,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 
     // REQ-RM-005: Validate build-info staleness before producing a descriptor
     if (!args.skipStalenessCheck) {
-      validateBuildInfoStaleness(args.commit);
+      validateBuildInfoStaleness(args.commit, options?.buildInfoPath);
     } else {
       console.error("⚠ Skipping REQ-RM-005 staleness check (--skip-staleness-check)");
     }

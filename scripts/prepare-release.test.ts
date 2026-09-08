@@ -13,7 +13,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -197,9 +198,28 @@ describe("prepare-release / validateReleaseDescriptor", () => {
 
 describe("prepare-release / end-to-end main()", () => {
   let dir: string;
+  let fixtureBuildInfoPath: string;
+  const FIXTURE_COMMIT = "abc123def456";
 
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "prepare-release-e2e-"));
+    // Isolated fixture build-info.generated.ts — NOT the real generated
+    // file (which is gitignored and absent in clean checkouts). This lets
+    // the staleness check be exercised deterministically without
+    // generating real build metadata or mutating process.cwd().
+    const runtimeDir = join(dir, "apps/cli/src/runtime");
+    mkdirSync(runtimeDir, { recursive: true });
+    fixtureBuildInfoPath = join(runtimeDir, "build-info.generated.ts");
+    writeFileSync(
+      fixtureBuildInfoPath,
+      `export const BUILD_INFO = {\n` +
+        `  version: "1.0.0",\n` +
+        `  commit: "${FIXTURE_COMMIT}",\n` +
+        `  date: "2026-01-01",\n` +
+        `  target: "linux-x64",\n` +
+        `  channel: "stable",\n` +
+        `} as const;\n`,
+    );
   });
 
   afterAll(() => {
@@ -208,25 +228,26 @@ describe("prepare-release / end-to-end main()", () => {
 
   it("emits valid spec-shaped release.json when the explicit commit matches build metadata", async () => {
     const out = join(dir, "release.json");
-    const buildInfo = readFileSync(
-      join(process.cwd(), "apps/cli/src/runtime/build-info.generated.ts"),
-      "utf-8"
-    );
+    const buildInfo = readFileSync(fixtureBuildInfoPath, "utf-8");
     const buildInfoCommit = buildInfo.match(/commit:\s*"([^"]+)"/)?.[1];
     expect(buildInfoCommit).toBeDefined();
-    const code = await main([
-      "--non-interactive",
-      "--version",
-      "1.2.0",
-      "--tag",
-      "v1.2.0",
-      "--channel",
-      "stable",
-      "--out",
-      out,
-      "--commit",
-      buildInfoCommit!,
-    ]);
+    expect(buildInfoCommit).toBe(FIXTURE_COMMIT);
+    const code = await main(
+      [
+        "--non-interactive",
+        "--version",
+        "1.2.0",
+        "--tag",
+        "v1.2.0",
+        "--channel",
+        "stable",
+        "--out",
+        out,
+        "--commit",
+        buildInfoCommit!,
+      ],
+      { buildInfoPath: fixtureBuildInfoPath },
+    );
     expect(code).toBe(0);
     const text = readFileSync(out, "utf-8");
     const parsed = JSON.parse(text);
@@ -241,54 +262,119 @@ describe("prepare-release / end-to-end main()", () => {
   });
 
   it("prints --help and exits 0 even when build metadata is explicitly stale", async () => {
-    const code = await main(["--help", "--commit", "definitely-stale"]);
+    const code = await main(
+      ["--help", "--commit", "definitely-stale"],
+      { buildInfoPath: fixtureBuildInfoPath },
+    );
     expect(code).toBe(0);
   });
 
   it("computes and prints SHA-256 even when build metadata is explicitly stale", async () => {
     const blob = join(dir, "blob.bin");
     writeFileSync(blob, "test blob");
-    const code = await main(["--sha256-file", blob, "--commit", "definitely-stale"]);
+    const code = await main(
+      ["--sha256-file", blob, "--commit", "definitely-stale"],
+      { buildInfoPath: fixtureBuildInfoPath },
+    );
     expect(code).toBe(0);
   });
 
   it("refuses a descriptor and writes no output when build metadata is explicitly stale", async () => {
     const out = join(dir, "stale-release.json");
-    const code = await main([
-      "--non-interactive",
-      "--version",
-      "1.2.0",
-      "--tag",
-      "v1.2.0",
-      "--channel",
-      "stable",
-      "--out",
-      out,
-      "--commit",
-      "definitely-stale",
-    ]);
+    // The fixture commit is FIXTURE_COMMIT; passing a different --commit
+    // exercises the REQ-RM-005 staleness refusal path.
+    const code = await main(
+      [
+        "--non-interactive",
+        "--version",
+        "1.2.0",
+        "--tag",
+        "v1.2.0",
+        "--channel",
+        "stable",
+        "--out",
+        out,
+        "--commit",
+        "definitely-stale",
+      ],
+      { buildInfoPath: fixtureBuildInfoPath },
+    );
     expect(code).toBe(1);
     expect(() => readFileSync(out, "utf-8")).toThrow();
   });
 
   it("allows an explicitly stale descriptor only with --skip-staleness-check", async () => {
     const out = join(dir, "override-release.json");
-    const code = await main([
-      "--non-interactive",
-      "--version",
-      "1.2.0",
-      "--tag",
-      "v1.2.0",
-      "--channel",
-      "stable",
-      "--out",
-      out,
-      "--commit",
-      "definitely-stale",
-      "--skip-staleness-check",
-    ]);
+    const code = await main(
+      [
+        "--non-interactive",
+        "--version",
+        "1.2.0",
+        "--tag",
+        "v1.2.0",
+        "--channel",
+        "stable",
+        "--out",
+        out,
+        "--commit",
+        "definitely-stale",
+        "--skip-staleness-check",
+      ],
+      { buildInfoPath: fixtureBuildInfoPath },
+    );
     expect(code).toBe(0);
     expect(ReleaseJsonSchema.safeParse(JSON.parse(readFileSync(out, "utf-8"))).success).toBe(true);
+  });
+
+  it("skips staleness check and succeeds when build metadata file is absent", async () => {
+    // In clean checkouts the generated build-info is gitignored and absent.
+    // The staleness check must skip gracefully (dev-build behavior) rather
+    // than refuse the descriptor.
+    const out = join(dir, "missing-release.json");
+    const code = await main(
+      [
+        "--non-interactive",
+        "--version",
+        "1.2.0",
+        "--tag",
+        "v1.2.0",
+        "--channel",
+        "stable",
+        "--out",
+        out,
+        "--commit",
+        "anything-at-all",
+      ],
+      { buildInfoPath: join(dir, "nonexistent-build-info.generated.ts") },
+    );
+    expect(code).toBe(0);
+    expect(ReleaseJsonSchema.safeParse(JSON.parse(readFileSync(out, "utf-8"))).success).toBe(true);
+  });
+
+  it.each([
+    [FIXTURE_COMMIT, 0],
+    ["definitely-stale", 1],
+  ] as const)("CLI uses metadata from its own working directory: %s", (commit, expectedCode) => {
+    const out = join(dir, `cli-${commit}.json`);
+    const result = spawnSync(process.execPath, [
+      join(import.meta.dir, "prepare-release.ts"),
+      "--non-interactive",
+      "--version", "1.2.0",
+      "--tag", "v1.2.0",
+      "--channel", "stable",
+      "--commit", commit,
+      "--out", out,
+    ], { cwd: dir, encoding: "utf-8", timeout: 5_000 });
+
+    expect(result.error).toBeUndefined();
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(expectedCode);
+    expect(existsSync(out)).toBe(expectedCode === 0);
+    if (expectedCode === 0) {
+      expect(ReleaseJsonSchema.safeParse(JSON.parse(readFileSync(out, "utf-8"))).success).toBe(true);
+    } else {
+      expect(result.stderr).toContain("REQ-RM-005 STALENESS CHECK FAILED");
+    }
   });
 
   it("exits non-zero on invalid channel in non-interactive mode", async () => {
