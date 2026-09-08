@@ -644,10 +644,14 @@ export type DeckAppDependencies = {
   adapterRegistry?: import("@deck/core").AdapterRegistry;
   resolveProjectRoot?: typeof resolveProjectRoot;
   runReleaseCheck?: typeof runReleaseCheckWithTimeout;
+  stageReleaseAssets?: typeof stageReleaseAssets;
+  runUpgradeOrchestrator?: typeof runUpgradeOrchestrator;
+  detectInstallKind?: typeof detectInstallKind;
   configStore?: DeckConfigStore;
   secretStore?: import("@deck/core").DeckSecretStore;
   validateSupermemoryReadOnlyApi?: typeof validateSupermemoryRuntimeCredentialReadOnly;
   initialScreen?: Screen;
+  initialUpgradeDescriptor?: ReleaseJson | null;
   initialSelectedEnvironments?: EnvironmentId[];
   initialMemoryProvider?: AdaptiveMemoryProvider;
   initialSupermemorySetup?: SupermemorySetupValues;
@@ -804,6 +808,9 @@ export function DeckApp(dependencies: DeckAppDependencies = {}) {
   const environmentOptions = buildEnvironmentMenuOptions(adapterRegistry, getEnvironmentOptions());
   const projectRootFor = dependencies.resolveProjectRoot ?? resolveProjectRoot;
   const releaseCheckFor = dependencies.runReleaseCheck ?? runReleaseCheckWithTimeout;
+  const stageReleaseAssetsFor = dependencies.stageReleaseAssets ?? stageReleaseAssets;
+  const runUpgradeOrchestratorFor = dependencies.runUpgradeOrchestrator ?? runUpgradeOrchestrator;
+  const detectInstallKindFor = dependencies.detectInstallKind ?? detectInstallKind;
   const configStore = dependencies.configStore;
   if (!configStore) throw new Error("DeckApp requires caller-resolved global Deck config store.");
   const requiredConfigStore: DeckConfigStore = configStore;
@@ -943,7 +950,7 @@ export function DeckApp(dependencies: DeckAppDependencies = {}) {
   const [releaseCheck, setReleaseCheck] = useState<ReleaseCheckState>({ kind: "pending" });
   // The descriptor captured by the release check, used as input to the
   // orchestrator when the user confirms the upgrade.
-  const [upgradeDescriptor, setUpgradeDescriptor] = useState<ReleaseJson | null>(null);
+  const [upgradeDescriptor, setUpgradeDescriptor] = useState<ReleaseJson | null>(dependencies.initialUpgradeDescriptor ?? null);
   // Cursor for the upgrade confirm screen (0=Apply, 1=Cancel).
   const [upgradeCursor, setUpgradeCursor] = useState(0);
   // Progress status for the upgrade progress screen.
@@ -1704,25 +1711,24 @@ export function DeckApp(dependencies: DeckAppDependencies = {}) {
     const run = async () => {
       try {
         const currentVersion = getBuildInfo().version;
-        // T11: Use real registry and caller-resolved global config (not placeholders)
-        const realRegistry = createDefaultAdapterRegistry();
-        const resolvedConfig = requiredConfigStore.readRequired();
-        await stageReleaseAssets(upgradeDescriptor);
-        const result = await runUpgradeOrchestrator({
+        await stageReleaseAssetsFor(upgradeDescriptor);
+        const result = await runUpgradeOrchestratorFor({
           descriptor: upgradeDescriptor,
           targetVersion: upgradeDescriptor.version,
           currentVersion,
           deps: {
-            installKind: detectInstallKind(),
+            installKind: detectInstallKindFor(),
             // Use process.execPath to correctly identify installed binary path.
             // In compiled Bun binaries, process.argv[0] can be "bun" while
             // process.execPath contains the actual binary path.
             currentBinaryPath: process.execPath ?? process.argv[0] ?? "",
             projectRoot: localResolvedProjectRoot ?? process.cwd(),
             // T11: Real registry with real adapters (pi, opencode)
-            adapterRegistry: realRegistry,
-            // T11: Real config (not default placeholder)
-            readGlobalDeckConfig: () => resolvedConfig,
+            adapterRegistry,
+            // Keep config parsing lazy so binary-only updates can replace a
+            // too-old binary even when newer optional preferences exist.
+            // Content sync still calls this reader and remains strict.
+            readGlobalDeckConfig: () => requiredConfigStore.readRequired(),
           },
         });
         if (cancelled) return;
@@ -1789,7 +1795,7 @@ export function DeckApp(dependencies: DeckAppDependencies = {}) {
       cancelled = true;
       for (const t of tickers) clearTimeout(t);
     };
-  }, [screen, upgradeDescriptor, localResolvedProjectRoot]);
+  }, [screen, upgradeDescriptor, localResolvedProjectRoot, adapterRegistry, detectInstallKindFor, runUpgradeOrchestratorFor, stageReleaseAssetsFor]);
 
   useEffect(() => {
     if (screen !== "developer-team-installing") return;

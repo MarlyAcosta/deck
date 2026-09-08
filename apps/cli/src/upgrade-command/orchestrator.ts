@@ -606,19 +606,21 @@ export async function runUpgradeOrchestrator(
       kind: "config" | "prompt" | "skill" | "subagent" | "mcp" | "state" | "manifest";
     }> = [];
     let runnerBackupError: string | undefined;
-    try {
-      runnerTargets = await collectRunnerBackupTargets(deps);
-    } catch (err) {
-      // Log error but continue - runner backup is best-effort
-      runnerBackupError = (err as Error).message;
-      console.error(`Warning: Failed to collect runner backup targets: ${runnerBackupError}`);
-      runnerTargets = [];
-    }
+    if (contentItems.length > 0) {
+      try {
+        runnerTargets = await collectRunnerBackupTargets(deps);
+      } catch (err) {
+        // Log error but continue - runner backup is best-effort
+        runnerBackupError = (err as Error).message;
+        console.error(`Warning: Failed to collect runner backup targets: ${runnerBackupError}`);
+        runnerTargets = [];
+      }
 
-    // If we couldn't collect runner targets, log a warning but proceed
-    // The sync will still work but without per-runner rollback capability
-    if (runnerTargets.length === 0 && !runnerBackupError) {
-      console.warn("Warning: No runner backup targets collected - skipping runner rollback capability");
+      // If we couldn't collect runner targets, log a warning but proceed
+      // The sync will still work but without per-runner rollback capability
+      if (runnerTargets.length === 0 && !runnerBackupError) {
+        console.warn("Warning: No runner backup targets collected - skipping runner rollback capability");
+      }
     }
 
     const backupInput: CreateBackupInput = {

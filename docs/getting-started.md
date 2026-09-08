@@ -27,14 +27,35 @@ Use the canonical installer:
 curl -fsSL https://raw.githubusercontent.com/kevin15011/deck/main/scripts/install.sh | bash
 ```
 
-The installer accepts a custom destination and an explicit, insecure checksum bypass for exceptional recovery:
+The installer accepts a custom destination for normal installs:
 
 ```sh
 ./install.sh --dir "$HOME/.local/bin"
-./install.sh --insecure
 ```
 
 `--insecure` disables an integrity check and is not the normal installation path. Prefer fixing a missing or unavailable checksum instead.
+
+## Recover a blocked binary
+
+If an older installed `deck` cannot update itself because it rejects newer optional preferences, download the installer over HTTPS to a temporary path, inspect it if needed, and run explicit recovery mode with a writable destination:
+
+```sh
+installer_path="$(mktemp)"
+curl --proto '=https' --proto-redir '=https' -fsSL \
+  https://raw.githubusercontent.com/kevin15011/deck/main/scripts/install.sh \
+  -o "$installer_path"
+bash "$installer_path" --recovery --dir "$HOME/.local/bin"
+```
+
+That form installs the latest stable release. To pin a specific verified release, add `--version`, for example:
+
+```sh
+bash "$installer_path" --recovery --dir "$HOME/.local/bin" --version v0.4.0
+```
+
+Recovery mode is non-interactive, verifies the release checksum, refuses plaintext HTTP and symlink or non-regular binary targets, and does not edit shell startup files. Use an explicit writable `--dir`; recovery refuses protected or unwritable destinations instead of escalating privileges.
+
+The installer serializes recovery per destination and attempts to restore an owned candidate if it receives SIGHUP, SIGINT, or SIGTERM before verification completes. It does not claim protection from SIGKILL, power loss, or storage failure.
 
 If the installer reports that the binary is not on `PATH`, start a new shell or add the reported directory to `PATH`. Confirm the binary identity with:
 
