@@ -439,6 +439,25 @@ describe("documentation governance", () => {
     expect(text).not.toMatch(/\bautomatic(?:ally)?\s+(?:routes?|loads?|invokes?|activates?)\s+(?:all|every)\s+(?:\d+\s+)?(?:bundled\s+)?external\s+skills\b/i);
   });
 
+  test("getting started documents checksum-verified recovery without insecure guidance", () => {
+    const text = content("docs/getting-started.md");
+    const readme = content("README.md");
+    const recovery = sectionBetween(text, "## Recover a blocked binary", "## First interactive run");
+
+    expect(recovery).toContain("installer_path=\"$(mktemp)\"");
+    expect(recovery).toContain("curl --proto '=https' --proto-redir '=https' -fsSL");
+    expect(recovery).toContain("bash \"$installer_path\" --recovery --dir \"$HOME/.local/bin\"");
+    expect(recovery).toContain("bash \"$installer_path\" --recovery --dir \"$HOME/.local/bin\" --version v0.4.0");
+    expect(recovery).toMatch(/checksum/i);
+    expect(recovery).toMatch(/writable `--dir`/i);
+    expect(recovery).toMatch(/SIGTERM|SIGINT|SIGHUP/);
+    expect(recovery).toMatch(/SIGKILL|power loss/i);
+    expect(recovery).not.toContain("--insecure");
+    expect(readme).toContain("bash \"$installer_path\" --recovery --dir \"$HOME/.local/bin\"");
+    expect(readme).toMatch(/writable `--dir`/i);
+    expect(readme).toMatch(/does not use `--insecure`/i);
+  });
+
   test("maintained relative Markdown links resolve", () => {
     for (const file of maintainedSurfaces) {
       const text = content(file);

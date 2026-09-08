@@ -16,7 +16,7 @@ Published binaries are installed with the supported installer:
 curl -fsSL https://raw.githubusercontent.com/kevin15011/deck/main/scripts/install.sh | bash
 ```
 
-The installer currently targets **macOS and Linux**, on **x64 and arm64**. It verifies release checksums by default and can install into a custom directory. See [Getting started](docs/getting-started.md) for source-checkout and first-run paths.
+The installer currently targets **macOS and Linux**, on **x64 and arm64**. It verifies release checksums by default and can install into a custom directory. If an older binary is blocked before it can update itself, download the installer over HTTPS to a temporary path and run `bash "$installer_path" --recovery --dir "$HOME/.local/bin"`. Recovery needs an explicit writable `--dir` and does not use `--insecure` or privilege escalation. See [Getting started](docs/getting-started.md) for source-checkout, recovery, and first-run paths.
 
 Then open the interactive deck:
 

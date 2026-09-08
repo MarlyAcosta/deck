@@ -647,6 +647,44 @@ describe("orchestrator", () => {
   // --- Happy paths ---------------------------------------------------
 
   describe("happy path", () => {
+    it("completes a binary-only upgrade when optional Deck config parsing throws", async () => {
+      const assetName = "deck_v1.2.6_linux-x64.tar.gz";
+      const archivePath = join(stagingDir, assetName);
+      createDeckArchive(archivePath, "v2-extracted-binary");
+      const archiveSha = sha256(readFileSync(archivePath));
+      let configReads = 0;
+
+      const result = await withPlatform("linux", "x64", () => runUpgradeOrchestrator({
+        descriptor: binaryOnlyDescriptor("1.2.6", assetName, archiveSha),
+        targetVersion: "1.2.6",
+        currentVersion: "1.0.0",
+        deps: makeDeps({
+          readGlobalDeckConfig: () => {
+            configReads += 1;
+            throw new Error("Unknown Deck config field under adaptiveMemory.");
+          },
+        }),
+      }));
+
+      expect(result.status).toBe("completed");
+      expect(result.binary.status).toBe("completed");
+      expect(result.content.status).toBe("skipped");
+      expect(configReads).toBe(0);
+    });
+
+    it("keeps content synchronization strict when optional Deck config parsing throws", async () => {
+      await expect(runUpgradeOrchestrator({
+        descriptor: contentOnlyDescriptor("1.2.7"),
+        targetVersion: "1.2.7",
+        currentVersion: "1.0.0",
+        deps: makeDeps({
+          readGlobalDeckConfig: () => {
+            throw new Error("Unknown Deck config field under adaptiveMemory.");
+          },
+        }),
+      })).rejects.toThrow(/Unknown Deck config field under adaptiveMemory/);
+    });
+
     it("extracts a staged .tar.gz binary archive before replacement", async () => {
       const assetName = "deck_v1.2.1_linux-x64.tar.gz";
       const archivePath = join(stagingDir, assetName);
