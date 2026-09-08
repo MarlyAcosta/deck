@@ -31,5 +31,10 @@
     "./skills/external": "./src/skills/external/index.ts",
     "./skills/bootstrap": "./src/skills/bootstrap/index.ts",
     "./spec-registry": "./src/spec-registry/index.ts"
+  },
+  "devDependencies": {
+    "@deck/adapter-codex": "workspace:*",
+    "@deck/adapter-opencode": "workspace:*",
+    "@deck/adapter-pi": "workspace:*"
   }
 }
