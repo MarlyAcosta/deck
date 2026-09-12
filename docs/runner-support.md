@@ -3,7 +3,7 @@
 > **Audience:** Users and maintainers configuring Deck runners.
 > **Authority:** support summary; runner adapters, core capability registry, and active OpenSpec requirements remain authoritative.
 > **Maintainer:** Deck maintainers.
-> **Evidence:** [`@deck/adapter-codex`](../packages/adapter-codex/src), [capability registry](../packages/core/src/runner-capability-registry.ts), and [Developer Team execution](developer-team-execution.md).
+> **Evidence:** [`@deck/adapter-codex`](../packages/adapter-codex/src), [`@deck/adapter-claude`](../packages/adapter-claude/src), [capability registry](../packages/core/src/runner-capability-registry.ts), and [Developer Team execution](developer-team-execution.md).
 
 Use this page to decide what Deck can configure and what still requires runner-native setup. Deck preferences are global: active settings live in `$XDG_CONFIG_HOME/deck/config.json` (or `~/.config/deck/config.json`). Project `.deck/` paths may still contain OpenSpec/runtime artifacts or legacy migration inputs, but preference changes in the dashboard, Doctor, launch, upgrade, and sync flows do not create or update `<project>/.deck/config.json`.
 
@@ -23,6 +23,34 @@ Deck writes project-local content and does **not** enable trust.
 Codex CLI 0.146 does not provide an OpenCode-style root custom-agent selector or a `--agent` flag; `.codex/agents` entries are child-agent roles. For new sessions launched by Deck's Codex developer command, Deck passes a bounded per-process `-c developer_instructions=...` override that instructs the root session to act as Deck Lead, load `.agents/skills/deck-lead/SKILL.md`, and avoid asking the user to repeat role selection. This is instruction-level, `static-compatible` guidance—not native root-role selection—and it does not alter global configuration or plain `codex` launches.
 
 `deck codex developer exec -- --your-prompt` joins prompt arguments deterministically and passes that content only through bounded stdin to `codex exec -`; it is not placed in argv or environment variables. Resume commands preserve existing Codex history and do not reinject Deck Lead bootstrap, model, or reasoning overrides.
+
+## Claude Code quick path
+
+1. Install and authenticate the `claude` CLI (subscription login or `ANTHROPIC_API_KEY`).
+2. Run `deck claude developer --dry-run` and review the mutation preview (SHA256-hash-based, per file `create`/`update`).
+3. Run `deck claude developer --yes` to apply the approved plan.
+4. Run `deck doctor` to check binary presence/version, launch-policy support, Developer Team materialization, and `CLAUDE.md` marker presence.
+
+Deck writes project-local content only (`.claude/agents/*.md`, matching `.claude/skills/*/SKILL.md`, a marker-owned `CLAUDE.md` section, and a generic single-server `.mcp.json` entry) and never touches the user's global `~/.claude/settings.json`.
+
+> **Launch policy:** every non-install-only Claude Developer Team interactive, exec, and resume launch adds the fixed `--permission-mode bypassPermissions` argv token. This was chosen over `--dangerously-skip-permissions` after live testing showed that flag is blocked by an undocumented Claude Code auto-mode classifier even when combined with `--allow-dangerously-skip-permissions`; `--permission-mode bypassPermissions` is the token that actually authorizes tool use non-interactively. It is visible in the launch preview and Doctor, is adapter-owned (never caller-overridable), and is never persisted in project or global Claude configuration.
+
+Claude Code does not expose an OpenCode-style root custom-agent selector; Deck's `--append-system-prompt` bootstrap mechanism exists for future per-launch role injection, but no Developer Team role content is wired through it yet — the 7 roles are materialized as native `.claude/agents/*.md` subagents instead, which Claude Code selects on its own.
+
+`deck claude developer exec -- --your-prompt` reuses the same bounded, argv-injection-safe stdin serializer Codex uses; the content is passed only through stdin, never argv or environment variables.
+
+### Claude Code capability matrix
+
+| Capability | Claude | Readiness rule |
+|---|---|---|
+| Developer Team roles | Supported | 7 canonical roles materialize as `.claude/agents/*.md` subagents with matching `.claude/skills/*/SKILL.md`. |
+| Interactive / exec / resume launch | Supported with route limits | Live-probed against the installed `claude --help` output; unsupported modes report an explicit gap rather than a guess. |
+| MCP server configuration | Supported with route limits | Generic single-server safe writer for `.mcp.json`; no capability-driven MCP selection. |
+| Per-role model assignment | Supported with route limits | Canonical `anthropic/claude-*` IDs map to Claude's native `sonnet`/`opus`/`haiku` aliases; an unmapped model is omitted with a warning rather than passed through raw. |
+| Per-role thinking effort | Supported with route limits | `--effort` levels (`low`/`medium`/`high`/`xhigh`/`max`) are read live from the installed version, not hardcoded. |
+| Standalone skill bundles, `deck-onboard`/`deck-archive` | Known gap | Not yet materialized for this runner. |
+| Context7, Serena, RTK, Context Mode, Codebase Memory, Web Search, Supermemory | Known gap | Not yet scoped for this runner; none are wired into the shared cross-runner capability registry. |
+| Trusted runner-host bridge | Known gap | No dossier continuity, one-use invocation authorization, or controlled-effects enforcement; static-compatible only. |
 
 ## Capability matrix
 

@@ -46,6 +46,22 @@ Deck previews project-local changes before applying `.codex/config.toml`, `.code
 
 > **Warning:** Every non-install-only Codex Developer Team launch passes `--dangerously-bypass-approvals-and-sandbox`. Sandboxing and command approvals are disabled for that Codex process, so it may modify or delete files and run commands without approval. Deck does not persist this per-launch bypass in project or global Codex configuration.
 
+### Claude Code CLI
+
+Claude Code is a registered Developer Team environment:
+
+```bash
+deck claude developer --dry-run
+deck claude developer --yes
+deck claude developer exec -- --your-prompt
+deck claude developer resume <session-id>
+deck claude developer resume --last
+```
+
+Deck previews project-local changes before writing `.claude/agents/*.md`, matching `.claude/skills/*/SKILL.md`, its marker-owned `CLAUDE.md` section, and a generic `.mcp.json` entry. It never touches the user's global `~/.claude/settings.json`. Interactive, exec, and resume are public `static-compatible` routes; shared capability integrations (Context7, Serena, RTK, Context Mode, Codebase Memory, Web Search, Supermemory) are known gaps, not silently claimed.
+
+> **Warning:** Every non-install-only Claude Developer Team launch passes `--permission-mode bypassPermissions`. Deck does not persist this per-launch policy in project or global Claude configuration.
+
 See [runner support](docs/runner-support.md) for MCP, memory, ownership, rollback, and known-gap details.
 
 - [Contributing](CONTRIBUTING.md) explains repository setup and verification.
@@ -60,7 +76,7 @@ See [runner support](docs/runner-support.md) for MCP, memory, ownership, rollbac
 |---|---|---|
 | Pi | **Supported** | Detects Pi, reviews its packages, configures its runner surfaces, installs the Developer Team, and can launch `deck pi developer`. |
 | OpenCode | **Supported** | Detects OpenCode, reviews its package/config evidence, configures its runner surfaces, and installs the Developer Team through the TUI flow. |
-| Claude | **Detection only** | Checks whether `claude` is present in `PATH`; no operational runner adapter is exposed for it. |
+| Claude | **Beta** | Detects Claude Code, materializes the Developer Team (`.claude/agents/*.md`, `CLAUDE.md`, generic `.mcp.json`), assigns models/thinking effort, and launches interactive, exec, and resume flows. |
 | Codex | **Beta** | Detects Codex CLI, installs static-compatible Developer Team content, previews project-local materialization, and launches interactive, exec, and resume flows. |
 | Adaptive memory | **Optional** | Defaults to none; Supermemory uses Deck runtime for supported supervised exec capture and optional MCP for scoped recall/list/graph/document operations. |
 | Developer Team | **Supported** | Seven adaptive roles, proportional verification, runner-native materialization, and separate lifecycle skills. |

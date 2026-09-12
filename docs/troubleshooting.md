@@ -28,7 +28,7 @@ If the screen opens but a plan cannot run, inspect the dashboard's blocked diagn
 Detection and operational support are different:
 
 - Pi and OpenCode have Deck adapters and runner-specific preflight.
-- Claude is detection-only. Codex has a Deck-supervised adaptive-memory hook bridge for launches started by Deck; protected execution controls remain static-compatible.
+- Codex and Claude have Deck adapters with route-limited protected execution controls. Codex additionally has a Deck-supervised adaptive-memory hook bridge for launches started by Deck; Claude does not yet.
 
 Run:
 

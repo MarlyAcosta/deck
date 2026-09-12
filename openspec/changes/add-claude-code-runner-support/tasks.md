@@ -504,21 +504,77 @@ action-runner code makes, confirmed by reading that code first rather than guess
 is a materially stronger claim than "the adapter methods don't throw in isolation," but it is
 not the same as a human clicking through the real menu.
 
-## Phase 7: Documentation and hardening
+## Phase 7: Documentation and hardening — COMPLETE
 
-### Task 7.1: Update support documentation
+**Pre-phase step, not originally planned: sync onto `upstream/main` first.** Before touching
+docs, the branch was rebased onto 9 commits that had landed on `upstream/main` (kevin15011/deck)
+since this branch's fork point, culminating in the v0.4.0 release (`opencode` package-setup fix,
+memory capture/recall/observability hardening, release-verification determinism, upgrade-recovery
+hardening). Verified safe before rebasing, not assumed: a `git merge-tree` three-way probe showed
+exactly one overlapping file (`bun.lock`, a lockfile) between the two change sets across the
+entire 206-file upstream diff; after rebasing, a diff-of-diffs (`diff <(git diff <old-merge-base>
+<old-branch-tip>) <(git diff upstream/main <new-branch-tip>)`) confirmed the six Claude phase
+commits' net content is byte-for-byte identical before and after — only `bun.lock`'s blob hash and
+line offset differ, from upstream inserting lines earlier in the file. Force-pushed with
+`--force-with-lease` after `bun test` (4998 pass/2 skip/1 fail, the 1 pre-existing failure
+confirmed to also fail on bare `upstream/main`), `bunx tsc --noEmit` (0 errors, down from 11
+pre-existing before the rebase — fixed upstream in the interim), and `deck openspec validate`
+(this change: 0 errors/warnings, not present in the 83-change error list) all passed on the
+rebased tip.
 
-- Update `docs/runners.md`, `docs/runner-support.md`, `docs/reference/support-matrix.md` to
-  reflect Claude's actual, earned status (`static-compatible`, not full parity) per
-  REQ-CLD-DOC-001.
+### Task 7.1: Update support documentation — DONE
 
-**Verification:** `deck skill-registry`/documentation-governance tests (see
-`tests/documentation-governance.test.ts`) pass against the updated docs.
+- Updated `docs/runners.md` (status table row, "Detection is not parity" paragraph, new `## Claude`
+  section with setup/launch/gap details), `docs/runner-support.md` (new "Claude Code quick path"
+  and "Claude Code capability matrix" sections mirroring Codex's), and
+  `docs/reference/support-matrix.md` (added a `Claude` column to the operational runner matrix,
+  moved Claude out of the stale "Detection-only runtimes" section into a renamed "Route-limited
+  runtimes" section, corrected the "Explicit limits" bullet) per REQ-CLD-DOC-001.
+- **Scope widened beyond the three files tasks.md originally named, found by grepping every
+  `productSurfaces`/`maintainedSurfaces` file for stale claims, not assumed clean:**
+  `README.md` (status table row, new "Claude Code CLI" section), `docs/README.md` (guide
+  description), `docs/getting-started.md`, `docs/operations.md`, and `docs/troubleshooting.md`
+  each asserted "Claude is detection-only" or "no operational Deck adapter" — false as of Phases
+  1–6. All five corrected to the same honest status: a real Developer Team adapter
+  (materialization, launch, per-role model/thinking assignment, doctor checks) with route limits
+  — explicitly **not** shared capability-registry participation (Context7, Serena, RTK, Context
+  Mode, Codebase Memory, Web Search, Supermemory all remain gaps per
+  `packages/adapter-claude/src/capability-catalog.ts`) and **not** a Deck-supervised
+  adaptive-memory bridge, unlike Codex.
+- `tests/documentation-governance.test.ts`'s `isSupportedDirectCommand` hardcoded allowlist
+  extended with the five `deck claude developer ...` command forms actually implemented in
+  `parseClaudeArgs` (`apps/cli/src/cli-args.ts`), mirroring the five already-hardcoded Codex forms
+  exactly — confirmed by reading `parseClaudeArgs` first, not assumed identical to Codex's (it
+  lacks Codex's `--local-only`/`--memory=` flags, which the docs correctly never mention for
+  Claude).
+- Confirmed, not assumed, that `deck skill-registry validate --runner claude` is genuinely
+  unsupported today (`isDocumentedRunnerId` only accepts `pi`/`opencode`), so the new docs
+  correctly report "Project-local skill discovery: Known gap" for Claude rather than claiming it.
 
-### Task 7.2: Full regression gate
+**Verification — actually run:** `bun test tests/documentation-governance.test.ts`: 16/16 pass
+(all governance predicates, including the Claude/Codex forbidden-claim regexes that block phrases
+like "supports Claude" or "Claude is operational" across every `productSurfaces` file, and the
+new command-allowlist entries). A `git grep -i claude` sweep across every `productSurfaces` and
+`maintainedSurfaces` file found zero remaining stale "detection-only" claims after the edits above
+(re-verified after the fact, not just during editing).
 
-- Run `bun test` (full suite), typecheck, and build across the monorepo.
+### Task 7.2: Full regression gate — DONE
 
-**Verification:** No regression in existing Pi/OpenCode/Codex test counts; new
-`@deck/adapter-claude` tests pass; `deck openspec validate --change-id
-add-claude-code-runner-support` passes with no errors.
+- Ran `bun test` (full suite), `bunx tsc --noEmit` (full monorepo), and `deck openspec validate`
+  against the rebased, documentation-updated tip.
+
+**Verification — actually run, not assumed:** `bun test`: 4998 pass / 2 skip / 1 fail / 21310
+expect() calls across 322 files — the single failure
+(`apps/cli/src/__tests__/binary-smoke.test.tsx > Binary smoke tests > doctor runs and reports
+diagnostics`) is pre-existing and environment-dependent (it fails identically on bare
+`upstream/main` with zero Claude commits applied, confirmed by checking out `upstream/main` in
+this same sandbox and re-running the identical test in isolation), not a regression from this
+change. This is a materially better baseline than tasks.md's Phase 1–6 "24 fail/3 errors" figure
+— the upstream hardening commits pulled in by the Phase 7 rebase fixed the majority of those
+pre-existing failures as a side effect. `bunx tsc --noEmit`: 0 errors across the entire monorepo
+(down from 11 pre-existing errors noted in Phase 1, also fixed upstream in the interim).
+`deck openspec validate`: 879 errors/736 warnings total across the repo, but zero attributable to
+`add-claude-code-runner-support` (absent from the list of 83 changes with issues) — the repo-wide
+count is pre-existing legacy YAML-parsing noise, confirmed identical in kind and comparable in
+magnitude on bare `upstream/main` (879 errors/736 warnings there too, across 110 changes instead
+of 111 — the +1 is this change contributing zero new errors).

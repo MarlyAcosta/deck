@@ -5,7 +5,7 @@ Support labels are scoped to a surface. “Supported” for one capability does 
 > **Audience:** People evaluating whether Deck covers a runner or capability.
 > **Authority:** Current product boundary; source registries, adapters, tests, and runner evidence define status.
 > **Maintainer:** Deck maintainers.
-> **Evidence:** [runner capability registry](../../packages/core/src/runner-capability-registry.ts), [runtime detection](../../apps/cli/src/runtime-detection.ts), [adapter registry](../../apps/cli/src/runner-adapters.ts), [canonical catalogs](../../packages/core/src/teams/developer/catalog.ts), and [documentation governance](../../tests/documentation-governance.test.ts).
+> **Evidence:** [runner capability registry](../../packages/core/src/runner-capability-registry.ts), [runtime detection](../../apps/cli/src/runtime-detection.ts), [adapter registry](../../apps/cli/src/runner-adapters.ts), [canonical catalogs](../../packages/core/src/teams/developer/catalog.ts), [Claude capability catalog](../../packages/adapter-claude/src/capability-catalog.ts), and [documentation governance](../../tests/documentation-governance.test.ts).
 
 ## Status vocabulary
 
@@ -21,25 +21,25 @@ Support labels are scoped to a surface. “Supported” for one capability does 
 
 ## Operational runner matrix
 
-Pi and OpenCode are operational Deck runners. Codex has a Developer Team adapter with route-limited protected controls and Deck-supervised Supermemory loopback support. The cells use the status vocabulary above; runner-specific details are described below the table.
+Pi and OpenCode are operational Deck runners. Codex and Claude each have a Developer Team adapter with route-limited protected controls; Codex additionally has Deck-supervised Supermemory loopback support that Claude does not yet. The cells use the status vocabulary above; runner-specific details are described below the table.
 
-| Surface | Pi | OpenCode | Codex |
-|---|---|---|---|
-| Binary detection | Supported | Supported | Supported |
-| Version/config preflight | Supported | Supported | Supported |
-| Package and MCP review | Supported | Supported | Supported with static-compatible route limits |
-| Developer Team materialization | Supported | Supported | Supported with static-compatible route limits |
-| Model discovery and per-role assignment | Supported | Supported | Supported |
-| Adaptive-memory runner configuration | Runner-specific | Runner-specific | Runner-specific; Deck-supervised launches use an ephemeral loopback token, while optional MCP OAuth remains external |
-| Project-local skill discovery | Supported | Supported | Supported |
+| Surface | Pi | OpenCode | Codex | Claude |
+|---|---|---|---|---|
+| Binary detection | Supported | Supported | Supported | Supported |
+| Version/config preflight | Supported | Supported | Supported | Supported |
+| Package and MCP review | Supported | Supported | Supported with static-compatible route limits | Supported with static-compatible route limits; generic single-server `.mcp.json` writer only, no capability-driven MCP selection |
+| Developer Team materialization | Supported | Supported | Supported with static-compatible route limits | Supported with static-compatible route limits; the 7 canonical roles and `CLAUDE.md` materialize, standalone/bootstrap skills are a known gap |
+| Model discovery and per-role assignment | Supported | Supported | Supported | Supported with static-compatible route limits; static native-alias mapping (`sonnet`/`opus`/`haiku`), not live discovery |
+| Adaptive-memory runner configuration | Runner-specific | Runner-specific | Runner-specific; Deck-supervised launches use an ephemeral loopback token, while optional MCP OAuth remains external | Known gap; no Deck-supervised memory bridge is built for this runner |
+| Project-local skill discovery | Supported | Supported | Supported | Known gap; `skill-registry` does not yet accept this runner |
 
 Project-local discovery is always scoped to the active runner. Pi and OpenCode can share a capability ID while using different configuration files, package systems, model discovery, and verification effects.
 
-## Detection-only runtimes
+## Route-limited runtimes
 
 | Runtime | Status | Deck scope |
 |---|---|---|
-| Claude | Detection only | Deck can observe the binary in `PATH`; no operational adapter is registered. |
+| Claude | Supported with route limits | Deck can materialize and launch the Developer Team. No shared capability registry participation (Context7, Serena, RTK, Context Mode, Codebase Memory, Web Search, Supermemory) and no Deck-supervised memory bridge yet. |
 | Codex | Supported with route limits | Deck can configure and launch the Developer Team. Deck-supervised launches bind adaptive memory through runner hooks; protected execution controls remain static-compatible. |
 
 ## Runner-independent surfaces
@@ -64,7 +64,7 @@ Project-local discovery is always scoped to the active runner. Pi and OpenCode c
 
 ## Explicit limits
 
-- Claude detection does not create a Deck runner adapter. Codex has a Deck-supervised adaptive-memory hook bridge, but protected execution controls remain static-compatible.
+- Claude has a Developer Team runner adapter (materialization, launch, per-role model/thinking assignment, doctor checks), but it does not participate in the shared capability registry (Context7, Serena, RTK, Context Mode, Codebase Memory, Web Search, Supermemory all report as gaps) and has no Deck-supervised adaptive-memory bridge or trusted-execution-host controls yet. Codex has a Deck-supervised adaptive-memory hook bridge, but protected execution controls remain static-compatible.
 - Pi and OpenCode can share a capability ID while using different config files, package systems, model discovery, and verification effects.
 - Adaptive memory never outranks OpenSpec, source, tests, or current runner evidence.
 - Project-local skill metadata is discovery input, not runtime authority or bundled Deck content.

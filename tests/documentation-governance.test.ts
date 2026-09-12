@@ -238,6 +238,11 @@ function isSupportedDirectCommand(command: string): boolean {
     "deck codex developer exec -- --your-prompt",
     "deck codex developer resume <session-id>",
     "deck codex developer resume --last",
+    "deck claude developer --dry-run",
+    "deck claude developer --yes",
+    "deck claude developer exec -- --your-prompt",
+    "deck claude developer resume <session-id>",
+    "deck claude developer resume --last",
     "deck doctor",
   ]).has(command)) return true;
 

@@ -19,7 +19,7 @@ The report groups checks into Deck installation, runtimes, memory providers, MCP
 - state directory, current version, and active operation locks;
 - Deck config directory readability;
 - Pi and OpenCode versions and package evidence;
-- Claude presence in `PATH` as a detection-only signal and Codex route-limited adapter readiness;
+- Codex and Claude route-limited adapter readiness (binary presence/version, launch-policy support, Developer Team materialization);
 - Supermemory and Serena binary visibility;
 - known runner MCP entries;
 - release availability, executable identity, and bundled skill count.
