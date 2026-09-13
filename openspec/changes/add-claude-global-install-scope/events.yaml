@@ -1,0 +1,50 @@
+schema: spec-registry-events-v1
+events:
+  - phase: explore
+    status: completed
+    event: explore.completed
+    artifact: exploration.md
+    timestamp: "2026-09-12"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Inspected packages/adapter-claude/src/developer-team-install.ts and transaction.ts: both already root-parameterized, no scope-awareness needed there."
+      - "Inspected packages/adapter-opencode/src/runner-adapter.ts: OpenCode already defaults to homedir()/.config/opencode, the direct UX precedent for this change."
+      - "Live-verified global subagent and global skill loading against the real claude binary, with explicit user permission, cleaned up immediately after."
+  - phase: proposal
+    status: completed
+    event: proposal.completed
+    artifact: proposal.md
+    timestamp: "2026-09-12"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Initial draft kept project-scoped as default with --global opt-in; user explicitly requested the reverse (global by default, --project opt-in) to match OpenCode's actual UX. Revised in place before advancing."
+  - phase: spec
+    status: completed
+    event: spec.completed
+    artifact: spec.md
+    timestamp: "2026-09-12"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "13 RFC 2119 requirements (REQ-CGS-ROOT/CLI/ISO/RT/DOC) plus 5 acceptance scenarios, updated in place to reflect the global-by-default decision."
+  - phase: design
+    status: completed
+    event: design.completed
+    artifact: design.md
+    timestamp: "2026-09-12"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Recorded the caller-supplied-root architecture and the default-flip decision with its rationale (no published release depends on the prior default)."
+      - "Recorded the project-vs-global subagent precedence question as an explicit, unresolved risk to close live in Task 2."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-09-12"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Six tasks: root resolution + CLI default flip (Task 1), full transaction round trip plus the live precedence check (Task 2), documentation (Task 3), doctor/capability-inventory global visibility (Task 4, deferred), TUI scope-selection screen (Task 5, deferred), full regression gate (Task 6)."

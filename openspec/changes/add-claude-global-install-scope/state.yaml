@@ -1,0 +1,43 @@
+schema: spec-registry-v1
+changeId: add-claude-global-install-scope
+name: Add Global Install Scope for Claude Code
+currentPhase: tasks
+status: in_progress
+artifacts:
+  exploration: exploration.md
+  proposal: proposal.md
+  spec: spec.md
+  design: design.md
+  tasks: tasks.md
+provenance:
+  - phase: explore
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-12"
+    registryWrite: non-deferred
+    note: "Inspected packages/adapter-claude/src/developer-team-install.ts and transaction.ts directly: both already resolve every path via join(projectRoot, relativePath) with no scope-awareness, confirming global-scope support needs no changes to either module. Inspected packages/adapter-opencode/src/runner-adapter.ts:751 and 5 other call sites: OpenCode's Developer Team config defaults to homedir()/.config/opencode unless overridden, explaining why the user's OpenCode setup persists across projects without reinstalling. Live-verified (with explicit user permission, cleaned up immediately after) that Claude Code loads user-level subagents from ~/.claude/agents/ and user-level skills from ~/.claude/skills/ when invoked from an unrelated project directory with no local .claude/ config: a temporary probe agent was spawned (subagent_stats.by_type: {\"deck-global-probe-temp\": 1}) and returned its exact expected output; a temporary probe skill invoked via /deck-global-skill-probe-temp returned its exact expected output. Both probes removed immediately after verification. ~/.claude/CLAUDE.md global-memory loading was already implicitly proven by this session's own system prompt (sourced from the user's real ~/.claude/CLAUDE.md via @RTK.md), not separately tested."
+  - phase: proposal
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-12"
+    registryWrite: non-deferred
+    note: "Drafted scope: a --global flag as opt-in, project-scoped remaining the default, to minimize behavioral change from add-claude-code-runner-support. User explicitly overrode this after review: global should be the default (matching OpenCode's actual UX the user relies on daily), with --project as the opt-in for project-isolated installs. Proposal revised in place to reflect the flipped default before proceeding to tasks -- recorded as a deliberate, user-directed design pivot in design.md's 'Decision: default flips to global' section, not a silent reversal."
+  - phase: spec
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-12"
+    registryWrite: non-deferred
+    note: "Specified root resolution (REQ-CGS-ROOT-*), CLI surface with global-by-default/--project opt-in (REQ-CGS-CLI-*), shared-type and cross-runner non-interference guarantees (REQ-CGS-ISO-*), a live-verified round trip requirement including the previously-unverified project-vs-global precedence question (REQ-CGS-RT-*), and honest scope-boundary requirements against overclaiming doctor/TUI/Codex/Pi support (REQ-CGS-DOC-*). Five acceptance scenarios, updated in place after the default-flip decision to describe the new default (global, no flag) and the --project opt-in rather than the original --global opt-in shape."
+  - phase: design
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-12"
+    registryWrite: non-deferred
+    note: "Recorded the caller-supplied-root architecture (zero changes needed to developer-team-install.ts/transaction.ts, confirmed by reading every call site), the exact main.tsx dispatch-site change, and the default-flip decision with its rationale (no published Deck release depends on the prior project-scoped default, so the cost of flipping it is theoretical, not real). Recorded the project-vs-global subagent precedence question as an explicit, unresolved risk to be closed live in Task 2, not assumed from common CLI convention."
+  - phase: tasks
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-12"
+    registryWrite: non-deferred
+    note: "Created six tasks: Task 1 (root resolution + CLI default flip, live-verified through the real binary), Task 2 (full transaction round trip at global scope plus the live precedence check the design flagged as open), Task 3 (documentation, extending the same documentation-governance command allowlist add-claude-code-runner-support's own Phase 7 extended), Task 4 (doctor/capability-inventory global visibility, explicitly deferred and tracked, not started), Task 5 (TUI scope-selection screen, explicitly deferred and tracked, not started), Task 6 (full regression gate). Mirrors add-claude-code-runner-support's own phasing discipline: a small, fully-verified vertical first, deferred work named rather than silently dropped."
+next_action: "Awaiting user go-ahead to begin Task 1 implementation (resolveClaudeInstallRoot, --project flag parsing, main.tsx dispatch gate)."
