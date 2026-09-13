@@ -1,14 +1,15 @@
 schema: spec-registry-v1
 changeId: add-claude-code-runner-support
 name: Add Claude Code CLI Runner Support
-currentPhase: tasks
-status: completed
+currentPhase: archive
+status: archived
 artifacts:
   exploration: exploration.md
   proposal: proposal.md
   spec: spec.md
   design: design.md
   tasks: tasks.md
+  archive_report: archive-report.md
 provenance:
   - phase: explore
     agent: claude-code-session
@@ -94,4 +95,10 @@ provenance:
     timestamp: "2026-09-12"
     registryWrite: non-deferred
     note: "Phase 7 (documentation and hardening) complete. Pre-phase step not originally planned: rebased the branch onto 9 commits that had landed on upstream/main (kevin15011/deck) since the fork point, culminating in the v0.4.0 release -- verified safe first via a git merge-tree three-way probe (exactly one overlapping file, bun.lock, across upstream's 206-file diff) and a post-rebase diff-of-diffs proving the six Claude phase commits' net content is byte-for-byte identical before/after (only bun.lock's blob hash/offset differs); force-pushed with --force-with-lease after bun test (4998 pass/2 skip/1 fail, the 1 failure confirmed pre-existing on bare upstream/main too) and bunx tsc --noEmit (0 errors, down from 11 pre-existing, fixed upstream in the interim). Task 7.1: updated docs/runners.md, docs/runner-support.md, docs/reference/support-matrix.md per REQ-CLD-DOC-001, and widened scope beyond those three (found by grepping every productSurfaces/maintainedSurfaces file, not assumed clean) to fix five more files -- README.md, docs/README.md, docs/getting-started.md, docs/operations.md, docs/troubleshooting.md -- that still falsely claimed Claude was detection-only. Extended tests/documentation-governance.test.ts's isSupportedDirectCommand allowlist with the five deck claude developer command forms actually implemented in parseClaudeArgs. Task 7.2: full bun test (4998 pass/2 skip/1 fail across 322 files, the 1 failure pre-existing and environment-dependent, confirmed via a side-by-side run on bare upstream/main), bunx tsc --noEmit (0 errors monorepo-wide), and deck openspec validate (0 errors/warnings for this change specifically; the 879 repo-wide errors are pre-existing legacy YAML-parsing noise present in the same magnitude on bare upstream/main). bun test tests/documentation-governance.test.ts: 16/16 pass."
-next_action: "All 7 phases complete and verified, including a rebase onto the latest upstream/main (v0.4.0) with zero content drift in the Claude phases. Remaining known-deferred work, unchanged from Phase 6 and explicitly tracked (not silently dropped): Task 3.6 (standalone/bootstrap skills), the trusted-execution-boundary gap, dynamic model discovery (a 3-entry static mapping stands in for Codex-style live query), MCP capability-driven selection (only the generic single-server writer exists), buildReviewPlan's simplicity needing revisit once capability-driven MCP selection exists, and shared capability-registry participation (Context7/Serena/RTK/Context Mode/Codebase Memory/Web Search/Supermemory all report as gaps in packages/adapter-claude/src/capability-catalog.ts). The adapter is real and documented at its earned status end-to-end: it detects, plans, previews with accurate mutation metadata, applies, launches, verifies, backs up, rolls back, and self-diagnoses a real Claude Code runner; every RunnerAdapter interface method is implemented for real; and every maintained doc surface reflects this status honestly rather than the stale 'detection only' claim. This change is ready to archive."
+  - phase: archive
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-12"
+    registryWrite: non-deferred
+    note: "Archived. archive-report.md written with a full 27-REQ traceability matrix (phase + implementation + live verification per requirement), the final Phase 7 regression-gate numbers, and an explicit list of every known deferred gap (Task 3.6, shared capability-registry non-participation, no adaptive-memory bridge, static model-alias mapping, MCP capability-driven selection, buildReviewPlan revisit, and global install scope -- the last of which is the subject of the immediately-following change, add-claude-global-install-scope). Moved to openspec/archive/add-claude-code-runner-support/. Performed on main (not the new feature branch) since this change was already merged to main and archiving is a property of where the archived change actually lives."
+next_action: "Archived. All follow-up work continues in openspec/changes/add-claude-global-install-scope/ (global install scope, in progress) and future, separately-proposed changes for shared capability-registry participation and the Deck-supervised adaptive-memory bridge."

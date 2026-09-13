@@ -132,3 +132,23 @@ events:
       - "Found the menu label was already real (buildEnvironmentMenuOptions overwrites the static placeholder for any registered adapter); the actual blocker was reviewTools() throwing, caught by composeRegisteredRunnerDashboard, showing a generic error."
       - "Repo-wide grep showed only buildReviewPlan and reviewTools have real production call sites; buildInstallationPlan/getNextScreen are unused, runAction only fires for capabilityId==='serena' which Claude's catalog never selects. Implemented all five for real; removed the now-fully-dead notYetImplemented() helper -- every RunnerAdapter method is real."
       - "Verified by reproducing composeRegisteredRunnerDashboard's exact call sequence plus the full installTeamBundle apply sequence against a real scratch project: succeeded without throwing, ready:true, 15-file install. adapter-claude 120/120 pass; full suite (4742/24/3, 315 files) matches the known baseline exactly; tsc clean."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-09-12"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Phase 7 (documentation and hardening) complete. Rebased the branch onto 9 commits from upstream/main (v0.4.0 release) first, verified via git merge-tree probe and a post-rebase diff-of-diffs that the six Claude phase commits' content is byte-for-byte identical before/after."
+      - "Updated 8 documentation surfaces (3 originally scoped plus 5 more found by a full productSurfaces/maintainedSurfaces grep sweep) that still falsely claimed Claude was detection-only. Extended tests/documentation-governance.test.ts's command allowlist with the 5 real deck claude developer forms."
+      - "Full regression gate: bun test 4998 pass/2 skip/1 fail across 322 files (the 1 failure pre-existing, confirmed via a side-by-side run on bare upstream/main); tsc --noEmit 0 errors; deck openspec validate 0 errors for this change; documentation-governance.test.ts 16/16 pass."
+  - phase: archive
+    status: archived
+    event: archive.completed
+    artifact: archive-report.md
+    timestamp: "2026-09-12"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "archive-report.md written with a full 27-REQ traceability matrix, the final Phase 7 regression-gate numbers, and an explicit list of every known deferred gap. Moved to openspec/archive/add-claude-code-runner-support/."
