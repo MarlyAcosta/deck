@@ -13,7 +13,7 @@
  * against that section whenever either changes.
  */
 
-export type ClaudeCapabilityStatus = "supported" | "gap";
+export type ClaudeCapabilityStatus = "supported" | "shared" | "gap";
 
 export type ClaudeCapabilityCatalogEntry = {
   capabilityId: string;
@@ -36,7 +36,7 @@ export const CLAUDE_CAPABILITY_CATALOG: readonly ClaudeCapabilityCatalogEntry[] 
   { capabilityId: "trusted-runner-host-bridge", label: "Trusted runner-host bridge", description: "No dossier continuity, one-use invocation authorization, or controlled-effects enforcement; static-compatible only.", status: "gap" },
   { capabilityId: "context-mode", label: "Context Mode", description: "Not yet scoped for Claude.", status: "gap" },
   { capabilityId: "codebase-memory", label: "Codebase Memory", description: "Not yet scoped for Claude.", status: "gap" },
-  { capabilityId: "rtk", label: "RTK", description: "Not yet scoped for Claude.", status: "gap" },
+  { capabilityId: "rtk", label: "RTK", description: "Reuses the shared rtk binary on PATH; no MCP entry (add-claude-shared-capability-registry Phase 1).", status: "shared" },
   { capabilityId: "serena", label: "Serena", description: "Not yet scoped for Claude.", status: "gap" },
   { capabilityId: "context7", label: "Context7", description: "Not yet scoped for Claude.", status: "gap" },
   { capabilityId: "web-search", label: "Web Search", description: "Not yet scoped for Claude.", status: "gap" },

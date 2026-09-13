@@ -47,3 +47,14 @@ events:
     notes:
       - "Eight tasks (seven phases plus final regression gate/docs), each with verification criteria including drift-detection tests against Codex's real constants for Context7 and Serena."
       - "User reviewed and corrected order/scope before this phase: split the original Context-Mode+Codebase-Memory phase in two (the unresolved index-readiness unknown must not block the clean case), and corrected buildReviewPlan work from a single final phase to per-phase minimal extensions plus a final safety-focused revisit."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-09-13"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Task 1 (RTK) complete: capability-catalog.ts moved rtk from gap to shared; getCapabilityInventory now runs a real checkSharedBinaryUsability('rtk') check, reused directly from packages/core (the same helper Codex's own rtk entry calls)."
+      - "Corrected during implementation: no buildReviewPlan branch needed for RTK -- Codex's own buildReviewPlan loop doesn't produce an action for rtk either, since a reuse-shared-binary capability needs no install-time action once its status is accurate."
+      - "Verified: adapter-claude 134/134 pass; live through the real adapter registry with rtk genuinely on PATH confirmed isInstalled: true; full bun test 5013 pass/1 fail (same pre-existing case) across 323 files; tsc 0 errors."

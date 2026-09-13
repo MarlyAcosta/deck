@@ -40,4 +40,10 @@ provenance:
     timestamp: "2026-09-13"
     registryWrite: non-deferred
     note: "Created eight tasks (seven phases plus a final regression-gate/documentation task), each with concrete verification criteria including drift-detection tests (Claude's values compared directly against Codex's constants, not just asserted in isolation) for Context7 and Serena specifically, since REQ-CSC-ISO-001 requires them to stay in sync with Codex's matching definitions."
-next_action: "Awaiting user go-ahead to begin Task 1 implementation (RTK -- the smallest, most-isolated capability, chosen first specifically to prove the end-to-end pattern before the larger phases)."
+  - phase: tasks
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-13"
+    registryWrite: non-deferred
+    note: "Task 1 (RTK) complete. capability-catalog.ts's rtk entry moved gap -> shared. getCapabilityInventory now runs a real checkSharedBinaryUsability('rtk') check (reused directly from packages/core, the exact same helper Codex's own rtk entry calls) via a new #rtkCapabilityEntry method; #toCatalogEntry gained an optional overrides parameter for isBlocked/diagnostics. Corrected during implementation: no buildReviewPlan branch was needed -- reading Codex's actual buildReviewPlan loop showed rtk is not among the capability IDs that produce any action when selected there either, since a reuse-shared-binary capability that's already present needs no install-time action, only an accurate status. Verified: adapter-claude 134/134 pass (2 new tests); live through the real adapter registry with rtk genuinely on PATH (rtk 0.45.0) confirmed isInstalled: true, supportStatus: shared; full bun test 5013 pass/1 fail (same pre-existing case) across 323 files; tsc 0 errors."
+next_action: "Task 1 (RTK) complete and verified -- the first proven vertical of this change, confirming the end-to-end pattern (capability-catalog status change, real checkSharedBinaryUsability reuse, getCapabilityInventory wiring) works before the larger phases. Task 2 (Context7) next."

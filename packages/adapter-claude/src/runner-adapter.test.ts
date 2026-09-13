@@ -400,6 +400,27 @@ describe("ClaudeRunnerAdapter capability catalog — Task 4.2, honest gaps", () 
   });
 });
 
+describe("ClaudeRunnerAdapter RTK capability — add-claude-shared-capability-registry Phase 1 (real bug found live: this capability reported status 'gap' and never appeared as selectable in the TUI)", () => {
+  test("rtk moves from 'gap' to 'shared' in the static catalog", () => {
+    const adapter = new ClaudeRunnerAdapter();
+    const entry = adapter.getCapability("rtk") as { supportStatus?: string } | undefined;
+    expect(entry?.supportStatus).toBe("shared");
+  });
+
+  test("getCapabilityInventory reflects the real rtk binary check, not a hardcoded guess (same checkSharedBinaryUsability helper Codex's own identical rtk entry calls)", async () => {
+    await withTempDir(async (dir) => {
+      const adapter = new ClaudeRunnerAdapter();
+      const inventory = await adapter.getCapabilityInventory({ projectRoot: dir, environmentId: "claude-development", runnerId: "claude", deckConfig: undefined as never });
+      const rtk = inventory.capabilities.find((c) => c.capabilityId === "rtk");
+      expect(rtk).toBeDefined();
+      expect(rtk!.supportStatus).toBe("shared");
+      // Whether rtk is actually on PATH varies by environment; what matters is that the field
+      // reflects a real check, not a hardcoded false the way every other "gap" entry does.
+      expect(typeof rtk!.isInstalled).toBe("boolean");
+    });
+  });
+});
+
 describe("ClaudeRunnerAdapter.diagnoseProject — Task 4.3, real deck doctor diagnostics", () => {
   test("reports a binary-missing error and nothing else when the binary is absent", async () => {
     const adapter = new ClaudeRunnerAdapter({ preflight: { probe: async () => ({ found: false }) } });

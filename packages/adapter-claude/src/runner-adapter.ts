@@ -14,6 +14,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  checkSharedBinaryUsability,
   findProvider,
   getModelsForProvider,
   type CapabilityCatalogEntry,
@@ -392,31 +393,54 @@ export class ClaudeRunnerAdapter implements RunnerAdapter {
   // Capability catalog — Task 4.2 (honest gaps, REQ-CLD-DOC-002)
   // -------------------------------------------------------------------------
 
-  #toCatalogEntry(entry: ClaudeCapabilityCatalogEntry, isInstalled: boolean): CapabilityCatalogEntry {
+  #toCatalogEntry(
+    entry: ClaudeCapabilityCatalogEntry,
+    isInstalled: boolean,
+    overrides?: { isBlocked?: boolean; diagnostics?: readonly string[] },
+  ): CapabilityCatalogEntry {
     return {
       capabilityId: entry.capabilityId,
       label: entry.label,
       description: entry.description,
-      section: entry.status === "gap" ? "gaps" : "claude",
+      section: entry.status === "gap" ? "gaps" : entry.status === "shared" ? "tools" : "claude",
       requirementLevel: "optional",
       installKind: "runner-native",
       supportStatus: entry.status,
       isInstalled,
-      isBlocked: false,
-      ...(entry.status === "gap" ? { diagnostics: ["Not yet implemented — see proposal.md \"Out of scope\" / tasks.md Task 3.6."] } : {}),
+      isBlocked: overrides?.isBlocked ?? false,
+      ...(overrides?.diagnostics ? { diagnostics: overrides.diagnostics }
+        : entry.status === "gap" ? { diagnostics: ["Not yet implemented — see proposal.md \"Out of scope\" / tasks.md Task 3.6."] } : {}),
     };
+  }
+
+  /**
+   * REQ-CSC-RTK-002 (`add-claude-shared-capability-registry`, Phase 1): reuses the exact same
+   * `checkSharedBinaryUsability` helper Codex calls for its own identical `rtk` entry
+   * (`packages/adapter-codex/src/runner-adapter.ts`'s `#sharedBinaryUsability` field) — not a
+   * second, Claude-specific PATH-checking implementation.
+   */
+  async #rtkCapabilityEntry(entry: ClaudeCapabilityCatalogEntry): Promise<CapabilityCatalogEntry> {
+    const usability = await checkSharedBinaryUsability("rtk");
+    return this.#toCatalogEntry(entry, usability.status === "ready", {
+      isBlocked: usability.status === "unusable",
+      ...(usability.status !== "ready" ? { diagnostics: [`rtk: ${usability.reason ?? usability.status}`] } : {}),
+    });
   }
 
   async getCapabilityInventory(input: CapabilityInventoryInput): Promise<CapabilityInventory> {
     const agentsInstalled = existsSync(join(resolveClaudeInstallRoot(), ".claude", "agents"))
       || existsSync(join(input.projectRoot, ".claude", "agents"));
+    const capabilities = await Promise.all(CLAUDE_CAPABILITY_CATALOG.map((entry) => {
+      if (entry.capabilityId === "rtk") return this.#rtkCapabilityEntry(entry);
+      return Promise.resolve(this.#toCatalogEntry(
+        entry,
+        entry.status === "supported" && ["native-agent-roles", "agent-bound-skills"].includes(entry.capabilityId) ? agentsInstalled : false,
+      ));
+    }));
     return {
       runnerId: this.runnerId,
       environmentId: input.environmentId,
-      capabilities: CLAUDE_CAPABILITY_CATALOG.map((entry) => this.#toCatalogEntry(
-        entry,
-        entry.status === "supported" && ["native-agent-roles", "agent-bound-skills"].includes(entry.capabilityId) ? agentsInstalled : false,
-      )),
+      capabilities,
     };
   }
 

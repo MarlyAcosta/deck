@@ -7,24 +7,39 @@ and (where live verification is possible) confirmed against the real binary/MCP 
 same discipline `add-claude-code-runner-support` and `add-claude-global-install-scope` both used.
 Phase 7 additionally requires at least one of Phases 1-6 to have landed first (REQ-CSC-RVP-002).
 
-## Task 1: RTK
+## Task 1: RTK — DONE
 
-- Change `capability-catalog.ts`'s `rtk` entry from `status: "gap"` to `status: "shared"`.
-- Find and reuse (not reimplement) the shared binary-presence detector Codex/Pi/OpenCode already
-  call for their own RTK entries.
-- Wire `getCapabilityInventory` so RTK's `isInstalled` reflects the real check.
-- Extend `buildReviewPlan` with the minimal branch needed to make RTK selectable and its action
-  real (reuse-confirmation, no install step).
+- Changed `capability-catalog.ts`'s `rtk` entry from `status: "gap"` to `status: "shared"`
+  (`ClaudeCapabilityStatus` gained the `"shared"` member).
+- Found and reused (not reimplemented) `checkSharedBinaryUsability` from `@deck/core`
+  (`packages/core/src/shared-binary-usability.ts`) — the exact same helper Codex's own `rtk`
+  entry calls via its private `#sharedBinaryUsability` field.
+- `getCapabilityInventory` now runs a real `checkSharedBinaryUsability("rtk")` check for the
+  `rtk` entry specifically (a new `#rtkCapabilityEntry` method), with `isInstalled`/`isBlocked`/
+  diagnostics all reflecting the real result — every other catalog entry's handling is unchanged.
+- `#toCatalogEntry` gained an optional `overrides` parameter (`isBlocked`, `diagnostics`) so RTK's
+  real result can flow through the same entry-building path every capability uses, rather than a
+  parallel one.
+- **Corrected during implementation, not assumed from the original task description**: no
+  `buildReviewPlan` branch was needed. Reading Codex's actual `buildReviewPlan` loop
+  (`packages/adapter-codex/src/runner-adapter.ts:980-1017`) shows `rtk` is *not* in the list of
+  capability IDs that produce a `configWrites`/manual-step action when selected — a
+  `reuse-shared-binary` capability that's already present needs no action at all, just an
+  accurate ready/not-ready status. Claude's existing `buildReviewPlan` (unconditional, ignores
+  `state.selectedCapabilities` entirely today) already produces the same no-action outcome for
+  RTK that Codex's does, for the same reason — nothing to correct here yet.
 
-**Verification:**
-- Unit test: RTK reports `isInstalled: true` when the binary is on `PATH`, `false` when it is not
-  (mirroring Codex's own RTK test pattern).
-- Live: with `rtk` genuinely on `PATH` in this environment, confirm via a reproduction script
-  (mirroring `add-claude-code-runner-support`'s Phase 6 methodology) that
-  `getCapabilityInventory`/`buildReviewPlan` report RTK as selected and ready — not through the
-  live interactive TUI, which cannot be reliably driven from this environment.
-- Full `bun test` + `bunx tsc --noEmit`: zero regressions, diffed against the pre-Phase-1
-  baseline.
+**Verification — actually run:**
+- `bun test packages/adapter-claude`: 134/134 pass (up from 132), including 2 new RTK-specific
+  tests (status is `"shared"`, `isInstalled` reflects a real boolean check, not a hardcoded
+  value).
+- Live, through the real adapter registry (`getAdapter("claude-development")`, the same function
+  `apps/cli/src/tui/app.tsx` calls): with `rtk` genuinely on `PATH` in this environment (`rtk
+  0.45.0`), `getCapabilityInventory` reports `{ supportStatus: "shared", isInstalled: true,
+  isBlocked: false }` for the real capability — not through the live interactive TUI, which
+  cannot be reliably driven from this environment.
+- Full `bun test`: 5013 pass / 2 skip / 1 fail (same pre-existing case) across 323 files —
+  zero regressions. `bunx tsc --noEmit`: 0 errors.
 
 ## Task 2: Context7
 

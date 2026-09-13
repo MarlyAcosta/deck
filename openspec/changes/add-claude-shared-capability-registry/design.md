@@ -19,18 +19,22 @@ Claude's `.mcp.json` format (confirmed in `add-claude-code-runner-support`'s Pha
 uses a mechanism Claude's `.mcp.json` schema doesn't need), defined as Claude's own constants with
 a comment tying them to Codex's matching definition, per REQ-CSC-CTX7-001/ISO-001.
 
-## Phase 1 — RTK: package layout
+## Phase 1 — RTK: package layout — DONE
 
-- `packages/adapter-claude/src/capability-catalog.ts`: `rtk`'s entry status changes from `"gap"`
-  to `"shared"`.
-- Binary detection: reuse whatever shared helper Codex/Pi/OpenCode call for PATH-presence checks
-  (to be confirmed exactly which shared function during implementation — `packages/core`'s
-  runtime-detection utilities are the likely location, confirmed by reading Codex's own RTK
-  detector call site first).
-- `getCapabilityInventory`: RTK's `isInstalled` reflects the real binary-presence result.
-- `buildReviewPlan`: RTK selected + binary present -> a real, minimal action (reuse, no
-  install step needed, matching Codex's `"reuse-shared-binary"` provision mode having no
-  install-time action beyond confirming presence).
+- `packages/adapter-claude/src/capability-catalog.ts`: `rtk`'s entry status changed from `"gap"`
+  to `"shared"` (a new member added to `ClaudeCapabilityStatus`).
+- Binary detection: confirmed the exact shared function by reading Codex's real call site
+  (`packages/adapter-codex/src/runner-adapter.ts:620`) — `checkSharedBinaryUsability`, exported
+  from `packages/core/src/shared-binary-usability.ts`. Reused directly, not reimplemented.
+- `getCapabilityInventory`: a new `#rtkCapabilityEntry` method runs the real check for `rtk`
+  specifically; `#toCatalogEntry` gained an optional `overrides` parameter so the result flows
+  through the same shared entry-building path every capability uses.
+- **`buildReviewPlan` needed no change** — corrected from the original plan after reading Codex's
+  actual `buildReviewPlan` loop: `rtk` is not among the capability IDs that produce any
+  `configWrites`/manual-step action when selected there either. A `reuse-shared-binary` capability
+  that's already present needs no install-time action, only an accurate status — which
+  `getCapabilityInventory` alone now provides. Claude's existing unconditional `buildReviewPlan`
+  already produces the same (correct) no-action outcome Codex's does for this specific capability.
 
 ## Phase 2 — Context7: package layout
 
