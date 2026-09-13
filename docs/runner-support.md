@@ -29,13 +29,13 @@ Codex CLI 0.146 does not provide an OpenCode-style root custom-agent selector or
 1. Install and authenticate the `claude` CLI (subscription login or `ANTHROPIC_API_KEY`).
 2. Run `deck claude developer --dry-run` and review the mutation preview (SHA256-hash-based, per file `create`/`update`).
 3. Run `deck claude developer --yes` to apply the approved plan.
-4. Run `deck doctor` to check binary presence/version, launch-policy support, Developer Team materialization, and `CLAUDE.md` marker presence.
+4. Run `deck doctor` to check binary presence/version, launch-policy support, Developer Team materialization, and `CLAUDE.md` marker presence — these checks still look at the project root only, not `~/.claude/`, a known gap: a project with only a global install currently reports as "not installed" in Doctor even though it is.
 
-Deck writes project-local content only (`.claude/agents/*.md`, matching `.claude/skills/*/SKILL.md`, a marker-owned `CLAUDE.md` section, and a generic single-server `.mcp.json` entry) and never touches the user's global `~/.claude/settings.json`.
+Deck always writes to the user level — `~/.claude/agents/*.md`, matching `~/.claude/skills/*/SKILL.md`, and a marker-owned `~/.claude/CLAUDE.md` section — never a project-scoped install; there is no flag to change this, matching OpenCode's own configure-once-everywhere default exactly. Deck never touches the user's `~/.claude/settings.json`. The generic single-server `.mcp.json` entry, when configured, is still written project-locally. If a project already has its own `.claude/agents/*.md` (from an older Deck version, or hand-authored), Claude Code gives that project-local content strict precedence over the global one for any same-named role — live-verified, not assumed; the global install only fills in projects that have no local override.
 
 > **Launch policy:** every non-install-only Claude Developer Team interactive, exec, and resume launch adds the fixed `--permission-mode bypassPermissions` argv token. This was chosen over `--dangerously-skip-permissions` after live testing showed that flag is blocked by an undocumented Claude Code auto-mode classifier even when combined with `--allow-dangerously-skip-permissions`; `--permission-mode bypassPermissions` is the token that actually authorizes tool use non-interactively. It is visible in the launch preview and Doctor, is adapter-owned (never caller-overridable), and is never persisted in project or global Claude configuration.
 
-Claude Code does not expose an OpenCode-style root custom-agent selector; Deck's `--append-system-prompt` bootstrap mechanism exists for future per-launch role injection, but no Developer Team role content is wired through it yet — the 7 roles are materialized as native `.claude/agents/*.md` subagents instead, which Claude Code selects on its own.
+Claude Code does not expose an OpenCode-style root custom-agent selector; Deck's `--append-system-prompt` bootstrap mechanism exists for future per-launch role injection, but no Developer Team role content is wired through it yet — the 7 roles are materialized as native `~/.claude/agents/*.md` subagents instead, which Claude Code selects on its own.
 
 `deck claude developer exec -- --your-prompt` reuses the same bounded, argv-injection-safe stdin serializer Codex uses; the content is passed only through stdin, never argv or environment variables.
 
@@ -43,7 +43,7 @@ Claude Code does not expose an OpenCode-style root custom-agent selector; Deck's
 
 | Capability | Claude | Readiness rule |
 |---|---|---|
-| Developer Team roles | Supported | 7 canonical roles materialize as `.claude/agents/*.md` subagents with matching `.claude/skills/*/SKILL.md`. |
+| Developer Team roles | Supported | 7 canonical roles materialize as `~/.claude/agents/*.md` subagents with matching `~/.claude/skills/*/SKILL.md`, always at the user level. |
 | Interactive / exec / resume launch | Supported with route limits | Live-probed against the installed `claude --help` output; unsupported modes report an explicit gap rather than a guess. |
 | MCP server configuration | Supported with route limits | Generic single-server safe writer for `.mcp.json`; no capability-driven MCP selection. |
 | Per-role model assignment | Supported with route limits | Canonical `anthropic/claude-*` IDs map to Claude's native `sonnet`/`opus`/`haiku` aliases; an unmapped model is omitted with a warning rather than passed through raw. |

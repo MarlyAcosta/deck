@@ -28,7 +28,7 @@ Pi and OpenCode are operational Deck runners. Codex and Claude each have a Devel
 | Binary detection | Supported | Supported | Supported | Supported |
 | Version/config preflight | Supported | Supported | Supported | Supported |
 | Package and MCP review | Supported | Supported | Supported with static-compatible route limits | Supported with static-compatible route limits; generic single-server `.mcp.json` writer only, no capability-driven MCP selection |
-| Developer Team materialization | Supported | Supported | Supported with static-compatible route limits | Supported with static-compatible route limits; the 7 canonical roles and `CLAUDE.md` materialize, standalone/bootstrap skills are a known gap |
+| Developer Team materialization | Supported | Supported | Supported with static-compatible route limits | Supported with static-compatible route limits; the 7 canonical roles and `CLAUDE.md` materialize at the user level (`~/.claude/...`), always — no project-scoped install exists; standalone/bootstrap skills are a known gap; `deck doctor` still checks only the project root, not `~/.claude/`, a known gap |
 | Model discovery and per-role assignment | Supported | Supported | Supported | Supported with static-compatible route limits; static native-alias mapping (`sonnet`/`opus`/`haiku`), not live discovery |
 | Adaptive-memory runner configuration | Runner-specific | Runner-specific | Runner-specific; Deck-supervised launches use an ephemeral loopback token, while optional MCP OAuth remains external | Known gap; no Deck-supervised memory bridge is built for this runner |
 | Project-local skill discovery | Supported | Supported | Supported | Known gap; `skill-registry` does not yet accept this runner |

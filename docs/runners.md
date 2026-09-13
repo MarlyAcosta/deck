@@ -13,7 +13,7 @@ Deck is runner-aware rather than runner-agnostic. The CLI registers operational 
 |---|---|---|
 | Pi | **Supported** | Detects the binary, runs preflight, reviews packages and MCP, configures capabilities, materializes the Developer Team, and can launch `deck pi developer`. |
 | OpenCode | **Supported** | Detects the binary, reads runner configuration and package evidence, configures capabilities, and materializes the Developer Team through the TUI. |
-| Claude | **Supported with route limits** | Deck can materialize and launch the Developer Team for Claude Code (`.claude/agents/*.md`, `CLAUDE.md`, a generic `.mcp.json` writer); per-role model/thinking-effort assignment and `deck doctor` checks are wired. Unlike Codex, shared capability integrations (Context7, Serena, RTK, Context Mode, Codebase Memory, Web Search, Supermemory) and a Deck-supervised memory bridge remain known gaps. |
+| Claude | **Supported with route limits** | Deck can materialize and launch the Developer Team for Claude Code, always at the user level (`~/.claude/agents/*.md`, `~/.claude/CLAUDE.md`, a generic `.mcp.json` writer) — no project-scoped install exists; per-role model/thinking-effort assignment and `deck doctor` checks are wired. Unlike Codex, shared capability integrations (Context7, Serena, RTK, Context Mode, Codebase Memory, Web Search, Supermemory) and a Deck-supervised memory bridge remain known gaps. |
 | Codex | **Supported with route limits** | Deck can configure and launch the Developer Team for Codex. Deck-supervised launches bind the Supermemory runtime through the same ephemeral loopback bridge used by runner hooks; protected execution controls remain static-compatible. |
 
 Detection is not parity. A detected binary does not imply that Deck can install packages, write runner configuration, launch a team, or verify runner-specific effects for that runtime. Codex has a Developer Team adapter and a Deck-supervised memory loopback, but it still does not claim first-class protected execution controls. Claude Code also has a Developer Team adapter, but it does not yet participate in the shared capability registry or the Deck-supervised memory loopback the way Codex does.
@@ -62,10 +62,12 @@ Claude Code preflight parses the live `claude --help` output to confirm binary p
 
 Claude-specific setup can include:
 
-- materializing the seven canonical Developer Team roles to `.claude/agents/*.md` plus matching `.claude/skills/*/SKILL.md`, and a marker-owned `CLAUDE.md` section;
+- materializing the seven canonical Developer Team roles to `~/.claude/agents/*.md` plus matching `~/.claude/skills/*/SKILL.md`, and a marker-owned `~/.claude/CLAUDE.md` section — **always at the user level, not the current project**, matching OpenCode's own configure-once-everywhere default; there is no flag to install project-scoped instead;
 - a generic single-server `.mcp.json` safe writer (read/merge/validate, never a blind overwrite);
 - per-role model assignment mapped to Claude's native `sonnet`/`opus`/`haiku` aliases (Deck's canonical catalog IDs do not resolve as `--model` values) plus per-role `--effort` (thinking) assignment;
-- `deck doctor` checks for binary presence, launch-policy support, Developer Team materialization, and `CLAUDE.md` marker presence.
+- `deck doctor` checks for binary presence, launch-policy support, Developer Team materialization, and `CLAUDE.md` marker presence — **these checks still look at the project root only, not `~/.claude/`**, a known gap: a project with only a global install currently reports as "not installed" in Doctor even though it is.
+
+If a project already has its own `.claude/agents/*.md` (installed by an older Deck version, or authored by hand), Claude Code gives that project-local content strict precedence over the global one for any same-named role — confirmed live, not assumed. The global install only fills in for projects that have no local override at all; it never silently overrides one that exists.
 
 Claude's standalone launch path is explicit:
 

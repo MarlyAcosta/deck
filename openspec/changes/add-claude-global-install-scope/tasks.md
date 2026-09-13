@@ -75,19 +75,31 @@ not let their absence block Tasks 1-3.
   verified" note — ready for Task 3's documentation update to state this specific, confirmed
   behavior rather than an assumption.
 
-## Task 3: Documentation
+## Task 3: Documentation — DONE
 
-- Update `docs/runners.md`'s `## Claude` section: the launch-path examples change from showing
-  only project-scoped commands to showing the always-global default, plus the live-confirmed
-  precedence answer from Task 2.
-- Update `docs/runner-support.md`'s "Claude Code quick path" section correspondingly.
-- Update `README.md`'s Claude Code CLI example block to match.
-- Extend `tests/documentation-governance.test.ts`'s `isSupportedDirectCommand` allowlist with any
-  new literal command forms the docs now show, mirroring how `add-claude-code-runner-support`'s
-  own Phase 7 extended that allowlist.
+- Updated `docs/runners.md`'s `## Claude` section (bullet list, status table row) to state the
+  always-global default explicitly (`~/.claude/agents/*.md`, `~/.claude/skills/*/SKILL.md`,
+  `~/.claude/CLAUDE.md`, no project-scoped flag) and the live-confirmed precedence answer from
+  Task 2 (project-local content, if present, strictly wins).
+- Updated `docs/runner-support.md`'s "Claude Code quick path" section, its capability matrix row,
+  and its root-Lead-startup paragraph correspondingly — the prior wording ("Deck writes
+  project-local content only") was flatly false after this change and is now corrected.
+- Updated `README.md`'s Claude Code CLI section (prose + status table row) to match.
+- Found and fixed, via a full grep sweep of every doc mentioning `.claude/agents` or `CLAUDE.md`
+  (not assumed clean from the three files above): `docs/reference/support-matrix.md`'s Developer
+  Team materialization row still implied project-scoped materialization. Also added an honest
+  Task 4 forward-reference in three places (`docs/runners.md`, `docs/runner-support.md`,
+  `docs/reference/support-matrix.md`): `deck doctor` still checks only the project root, not
+  `~/.claude/`, so a global-only install currently reports as "not installed" in Doctor — a real
+  gap, not hidden by the docs update.
+- No new literal command forms were introduced (no `--project`/`--global` examples exist to
+  document, since no such flag exists), so `tests/documentation-governance.test.ts`'s command
+  allowlist needed no changes.
 
-**Verification:** `bun test tests/documentation-governance.test.ts` passes with the updated docs
-and allowlist.
+**Verification — actually run:** `bun test tests/documentation-governance.test.ts`: 16/16 pass,
+first try, including the forbidden-claim regexes that block overclaiming Claude parity or
+capability. Full `bun test`: 5003 pass / 1 fail (same pre-existing failure) across 323 files.
+`bunx tsc --noEmit`: 0 errors.
 
 ## Task 4: Doctor/capability-inventory global visibility — deferred, not started
 

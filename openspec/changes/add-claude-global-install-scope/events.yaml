@@ -70,3 +70,14 @@ events:
       - "Task 2 complete: integrated backup->apply->verify->rollback round-trip test and a collision-safety test, both explicitly framed as global-scope against a temp directory standing in for homedir()."
       - "Live-verified the open precedence question with explicit user permission: a same-named agent with distinguishable bodies in a scratch project and the user's real ~/.claude/agents/ -- project-local content wins strictly (subagent_stats.spawned: 1, result: PROJECT_WINS). Both probe files removed immediately after."
       - "Verified: transaction.test.ts 11/11 pass, developer-team-install.test.ts 10/10 pass."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-09-12"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Task 3 complete: docs/runners.md, docs/runner-support.md, README.md updated to state the always-global default and the confirmed project-local-wins precedence. Corrected a flatly-false prior claim in docs/runner-support.md ('Deck writes project-local content only')."
+      - "Widened beyond the three files tasks.md named after a grep sweep found docs/reference/support-matrix.md also implied project-scoped materialization. Added an honest Doctor-gap forward-reference in three places."
+      - "Verified: documentation-governance.test.ts 16/16 pass first try; full bun test 5003 pass/1 fail across 323 files; tsc 0 errors."
