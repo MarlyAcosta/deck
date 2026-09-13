@@ -187,11 +187,28 @@ previews and applies `update .claude/CLAUDE.md` (not `create CLAUDE.md`), correc
 the pre-existing `@RTK.md` content. Full environment restored and confirmed byte-identical to its
 pre-test state via `diff`.
 
-## Task 6: Full regression gate
+## Task 6: Full regression gate — DONE
 
-- Run `bun test` (full suite), `bunx tsc --noEmit`, and `deck openspec validate` against the final
-  state of Tasks 1-5 and the CLAUDE.md path fix.
+- Ran `bun test` (full suite), `bunx tsc --noEmit`, and `deck openspec validate` against the final
+  state of Tasks 1-5 and the CLAUDE.md path fix, after the Task 4/5 commit landed.
 
-**Verification:** No regression in existing Pi/OpenCode/Codex/Claude test counts;
-`deck openspec validate` reports zero errors/warnings attributable to
-`add-claude-global-install-scope`.
+**Verification — actually run:**
+- `bun test`: 5009 pass / 2 skip / 1 fail / 21335 expect() calls across 323 files. The 1 failure
+  (`binary-smoke.test.tsx > doctor runs and reports diagnostics`) is the same pre-existing,
+  environment-dependent failure confirmed throughout this change and `add-claude-code-runner-support`
+  to also fail on bare `upstream/main` — zero regressions.
+- `bunx tsc --noEmit`: 0 errors, monorepo-wide.
+- `deck openspec validate`: 112 changes, 879 errors, 737 warnings — the same pre-existing baseline
+  magnitude confirmed throughout this session; zero errors or warnings attributable to
+  `add-claude-global-install-scope` specifically.
+- Real environment confirmed clean after all verification: no leftover files under
+  `~/.claude/agents/`, `~/.claude/skills/`, or `~/CLAUDE.md`; the real `~/.claude/CLAUDE.md`
+  confirmed byte-identical to its pre-change-work state via `diff` against a backup taken before
+  the first real-install verification.
+
+This change is functionally complete: Tasks 1-6 all done and verified, plus a real bug (the
+`CLAUDE.md` path) found and fixed along the way. Known, deliberately out-of-scope remaining gap:
+wiring `deck doctor` to actually call `ClaudeRunnerAdapter.diagnoseProject` for Claude (mirroring
+Codex's `inspectCodex`) — the method's own logic is correct, but no CLI call site exists for it;
+this is a pre-existing gap from `add-claude-code-runner-support`, not decided against, just not
+asked for.

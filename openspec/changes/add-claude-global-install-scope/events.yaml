@@ -103,3 +103,14 @@ events:
       - "Fixed: isGlobalInstallRoot pure comparison in install-root.ts; developer-team-install.ts selects the path based on it; buildClaudeDeveloperTeamInstallPlan gained an optional test-only knownGlobalRoot parameter."
       - "Process near-miss recorded honestly: a second real-install verification was left uncleaned for several turns, caught when full bun test showed 2 new failures in tests coupled to real ~/.claude/agents/ state. Cleaned up immediately; environment diff-confirmed restored exactly."
       - "Verified: adapter-claude 130/130 pass (6 new tests); full bun test 5009 pass/1 fail (same pre-existing failure) across 323 files; tsc 0 errors; openspec validate 0 errors for this change."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-09-13"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Task 6 (final regression gate) complete: full bun test 5009 pass/1 fail (same pre-existing case) across 323 files; tsc 0 errors; openspec validate 0 errors for this change. Real environment reconfirmed clean and diff-identical to its pre-work state."
+      - "Change is functionally complete: Tasks 1-6 done and verified, plus a real CLAUDE.md-path bug found and fixed along the way."
+      - "Investigated (no code changed, at user request): relaxing Claude's forced --permission-mode bypassPermissions toward OpenCode's safer always-interactive default for the 3 attended launch modes. Found Codex gets identical forced-bypass treatment; Pi/OpenCode never force any bypass; no permission-mode value gates destructively in headless mode. Could not live-verify whether Claude Code's native interactive prompt renders correctly under Deck's spawn (Ink-style TUI, same pty-simulation limitation add-claude-code-runner-support's Phase 6 recorded). User deferred implementing this for now."
