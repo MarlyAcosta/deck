@@ -173,6 +173,26 @@ describe("ClaudeRunnerAdapter models (real reuse of @deck/core's anthropic catal
     expect(adapter.readModelAssignments()).toEqual({});
     expect(adapter.readThinkingAssignments()).toEqual({});
   });
+
+  test("getModelInventory wraps the same static catalog getModelCatalog exposes, not a parallel list (real bug found live: without this, the TUI fell through to Pi's own fallback for Claude too)", async () => {
+    const adapter = createClaudeRunnerAdapter();
+    const catalog = adapter.getModelCatalog();
+    const result = await adapter.getModelInventory!({ projectRoot: "/does-not-matter-for-a-static-catalog" });
+    expect(result.state).toBe("ready");
+    if (result.state !== "ready") throw new Error("unreachable");
+    expect(result.inventory.providers.map((p) => p.id)).toEqual(catalog.providers.map((p) => p.id));
+    const anthropicModels = result.inventory.modelsByProvider["anthropic"] ?? [];
+    expect(anthropicModels.length).toBe(catalog.models.length);
+    for (const model of anthropicModels) expect(model.providerId).toBe("anthropic");
+  });
+
+  test("ui.model exists with Claude-specific guidance text, not Pi's — the exact fallback the TUI's modelUiMetadata() would otherwise silently use", () => {
+    const adapter = createClaudeRunnerAdapter();
+    expect(adapter.ui?.model).toBeDefined();
+    expect(adapter.ui!.model.providerSource.toLowerCase()).not.toContain("pi settings");
+    expect(adapter.ui!.model.missingChecks.some((check) => check.includes("pi "))).toBe(false);
+    expect(adapter.ui!.model.defaultThinkingLevels).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  });
 });
 
 describe("ClaudeRunnerAdapter TUI dashboard surfaces — Phase 6, real (not stubs)", () => {

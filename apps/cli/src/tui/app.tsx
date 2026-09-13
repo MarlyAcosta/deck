@@ -2447,6 +2447,19 @@ export function DeckApp(dependencies: DeckAppDependencies = {}) {
           startOpenCodeModelDiscovery();
         } else if (runtime === "codex") {
           startCodexModelDiscovery();
+        } else if (adapterFor(runtime).getModelInventory) {
+          // Real bug found live testing this exact install-time flow, not by inspection: this
+          // branch used to fall straight to Pi's own detectPiModelInventoryForTui() for any
+          // runner that wasn't OpenCode/Codex -- including Claude, which has its own real
+          // getModelInventory() (packages/adapter-claude/src/runner-adapter.ts) that was never
+          // reached because this call site never checked for it, unlike the other
+          // getModelInventory-aware branch this file already has (continueFromCurrent's
+          // "model-team-selection" handler).
+          const result = await adapterFor(runtime).getModelInventory!({ projectRoot: localResolvedProjectRoot ?? process.cwd(), mode: "prefer-cache" });
+          const inventory = buildTuiInventoryFromAdapterInventory(result && result.state !== "blocked" ? result.inventory : null);
+          setDetectedProviders(inventory.providers);
+          setModelsByProvider(inventory.modelsByProvider);
+          resetCursor(inventory.providers.length > 0 ? "agent-model-config-list" : "no-providers");
         } else {
           const inventory = detectPiModelInventoryForTui();
           setDetectedProviders(inventory.providers);
@@ -2836,6 +2849,18 @@ export function DeckApp(dependencies: DeckAppDependencies = {}) {
         }
         if (runtime === "codex") {
           startCodexModelDiscovery();
+          return;
+        }
+        // Same real bug, same fix, as the install-time "team-selection" handler above: check for
+        // an adapter-native getModelInventory() (e.g. Claude's) before falling back to Pi's own
+        // detectPiModelInventoryForTui(), which has nothing to do with any non-Pi runner.
+        if (runtime !== "all" && adapterFor(runtime).getModelInventory) {
+          const result = await adapterFor(runtime).getModelInventory!({ projectRoot: localResolvedProjectRoot ?? process.cwd(), mode: "prefer-cache" });
+          const inventory = buildTuiInventoryFromAdapterInventory(result && result.state !== "blocked" ? result.inventory : null);
+          setDetectedProviders(inventory.providers);
+          setModelsByProvider(inventory.modelsByProvider);
+          resetCursor(inventory.providers.length > 0 ? "agent-model-config-list" : "no-providers");
+          debug("open-developer-team-model-config: END");
           return;
         }
         const inventory = detectPiModelInventoryForTui();

@@ -41,6 +41,10 @@ import {
   type RunnerLaunchResult,
   type RunnerMcpConfigInput,
   type RunnerMcpConfigResult,
+  type RunnerModelDiscoveryRequest,
+  type RunnerModelEntry,
+  type RunnerModelInventoryResult,
+  type RunnerModelProvider,
   type RunnerProjectInspection,
   type RunnerRollbackResult,
   type RunnerVerifyResult,
@@ -100,6 +104,26 @@ export class ClaudeRunnerAdapter implements RunnerAdapter {
   readonly runnerId = "claude";
   readonly displayName = "Claude Code";
   readonly environmentIds: readonly string[] = ["claude-development"];
+  /**
+   * Real bug found live testing the TUI, not by inspection: without a `ui.model` here, the TUI's
+   * model-provider/model-selection/no-providers screens (`apps/cli/src/tui/screens/developer-team-screens.tsx`'s
+   * `modelUiMetadata()`) fall back to `DEFAULT_MODEL_UI` — Pi's own guidance text
+   * ("~/.pi/agent/settings.json", "pi --list-models") — shown for Claude, which has nothing to
+   * do with Pi. `defaultThinkingLevels` mirrors the `--effort` levels confirmed live against a
+   * real install in `add-claude-code-runner-support`'s Phase 4 (`low`/`medium`/`high`/`xhigh`/`max`);
+   * the adapter's own `getThinkingLevels()` refines this once `inspectProject` has actually run,
+   * but this static list is what the UI needs before that live probe exists.
+   */
+  readonly ui = {
+    environmentLabels: { "claude-development": "Claude Code Development" },
+    model: {
+      providerSource: "Providers and models come from Deck's bundled anthropic catalog (Deck's canonical catalog IDs are mapped to Claude's own sonnet/opus/haiku aliases at launch).",
+      missingChecks: ["claude --version (binary on PATH)", "claude auth status (subscription login or ANTHROPIC_API_KEY)"],
+      remediation: "Run `claude --version` and `claude doctor` to confirm the Claude Code CLI is installed and authenticated.",
+      defaultThinkingLevels: ["low", "medium", "high", "xhigh", "max"] as const,
+      usesNativeCompatibilityChecks: true,
+    },
+  } as const;
 
   readonly #preflight: ClaudePreflightEffects;
   /**
@@ -247,6 +271,44 @@ export class ClaudeRunnerAdapter implements RunnerAdapter {
       providers: provider ? [provider] : [],
       models: getModelsForProvider("anthropic"),
       developerTeamDefaults: [],
+    };
+  }
+
+  /**
+   * Real bug found live testing the TUI model-assignment screen, not by inspection: without this
+   * method, `apps/cli/src/tui/app.tsx`'s model-config dispatch (OpenCode -> its own discovery,
+   * Codex -> its own discovery, `getModelInventory` if present, else Pi's own
+   * `detectPiModelInventoryForTui()`) silently fell through to the *Pi-specific* fallback branch
+   * for Claude too — showing Pi's settings-file/`pi --list-models` guidance text and "no
+   * providers detected" for a runner that has nothing to do with Pi. Claude's catalog is static
+   * (`getModelCatalog()`, the same `anthropic` provider/model entries every other runner reuses),
+   * not runner-discovered, but wrapping it here — rather than adding Claude-specific branching to
+   * the shared TUI dispatch — is the smaller, already-designed-for fix: the TUI branch for
+   * `adapter.getModelInventory` already exists, just unreached by any adapter until now.
+   */
+  async getModelInventory(_request: RunnerModelDiscoveryRequest): Promise<RunnerModelInventoryResult> {
+    const catalog = this.getModelCatalog();
+    const providers: RunnerModelProvider[] = catalog.providers.map((entry) => ({
+      id: entry.id,
+      displayName: entry.displayName,
+      source: "runner-bundled",
+    }));
+    const modelsByProvider: Record<string, RunnerModelEntry[]> = {};
+    for (const model of catalog.models) {
+      (modelsByProvider[model.providerId] ??= []).push({
+        id: model.id,
+        providerId: model.providerId,
+        displayName: model.displayName,
+        supportsReasoning: model.capabilities.includes("reasoning"),
+        source: "runner-bundled",
+      });
+    }
+    return {
+      state: "ready",
+      inventory: { providers, modelsByProvider },
+      source: "memory",
+      discoveredAt: Date.now(),
+      fingerprint: "claude-static-anthropic-catalog-v1",
     };
   }
 
