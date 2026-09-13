@@ -1,0 +1,49 @@
+schema: spec-registry-events-v1
+events:
+  - phase: explore
+    status: completed
+    event: explore.completed
+    artifact: exploration.md
+    timestamp: "2026-09-13"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Confirmed live all six capabilities report status: gap for Claude. Read Codex's real capability-catalog.ts/mcp-config.ts/buildReviewPlan in full as the reference precedent."
+      - "Checked (not assumed) for a shared packages/core location for these values -- none exists; OpenCode and Codex use genuinely different mechanisms for the same Context7 service, confirming per-adapter constants as the real convention."
+  - phase: proposal
+    status: completed
+    event: proposal.completed
+    artifact: proposal.md
+    timestamp: "2026-09-13"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Seven phases drafted at user request to see the full plan before any code: RTK, Context7, Context Mode, Codebase Memory, Serena, Web Search, buildReviewPlan safety revisit. Supermemory excluded as its own future proposal."
+  - phase: spec
+    status: completed
+    event: spec.completed
+    artifact: spec.md
+    timestamp: "2026-09-13"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "REQ-CSC-ISO/RTK/CTX7/CM/CBM/SER/WS/RVP/DOC requirements plus 6 acceptance scenarios. ISO-001/CTX7-001 corrected in place after the exploration finding about per-adapter constants."
+  - phase: design
+    status: completed
+    event: design.completed
+    artifact: design.md
+    timestamp: "2026-09-13"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Per-phase package layout for all seven phases. Codebase Memory's design explicitly left open pending its own investigation sub-task."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-09-13"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Eight tasks (seven phases plus final regression gate/docs), each with verification criteria including drift-detection tests against Codex's real constants for Context7 and Serena."
+      - "User reviewed and corrected order/scope before this phase: split the original Context-Mode+Codebase-Memory phase in two (the unresolved index-readiness unknown must not block the clean case), and corrected buildReviewPlan work from a single final phase to per-phase minimal extensions plus a final safety-focused revisit."

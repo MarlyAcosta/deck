@@ -1,0 +1,43 @@
+schema: spec-registry-v1
+changeId: add-claude-shared-capability-registry
+name: Add Shared Capability Registry Participation for Claude Code
+currentPhase: tasks
+status: in_progress
+artifacts:
+  exploration: exploration.md
+  proposal: proposal.md
+  spec: spec.md
+  design: design.md
+  tasks: tasks.md
+provenance:
+  - phase: explore
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-13"
+    registryWrite: non-deferred
+    note: "Confirmed live (TUI package-selection screen for Claude shows nothing) that all six capabilities (Context7, RTK, Serena, Context Mode, Codebase Memory, Web Search) report status: gap in packages/adapter-claude/src/capability-catalog.ts. Read Codex's real implementation in full (capability-catalog.ts, mcp-config.ts, runner-adapter.ts's buildReviewPlan) as the reference precedent for every phase. Checked, not assumed, whether a shared packages/core location exists for these values -- it does not; OpenCode's own Context7 wiring uses a completely different mechanism (local npm package) than Codex's (remote streamable-http) for the same physical service, confirming per-adapter constants is this codebase's real convention. Codebase Memory's 'project index readiness' mechanism was not located during this pass -- recorded honestly as Task 4's own first sub-task, not guessed at."
+  - phase: proposal
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-13"
+    registryWrite: non-deferred
+    note: "User asked to see the full plan for all six capabilities before any code was written. Drafted seven phases (RTK, Context7, Context Mode, Codebase Memory, Serena, Web Search, buildReviewPlan safety revisit), each sized from reading Codex's actual code for that specific capability, not from the one-line capability-catalog description alone. Supermemory excluded from the start as its own, separate, materially larger future proposal."
+  - phase: spec
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-13"
+    registryWrite: non-deferred
+    note: "Specified cross-runner non-interference (REQ-CSC-ISO-*, corrected in place after the exploration finding about per-adapter constants being the real convention -- no shared packages/core location invented), per-phase requirements for all seven phases (REQ-CSC-RTK/CTX7/CM/CBM/SER/WS/RVP-*), and honest scope-boundary requirements against overclaiming Supermemory or blanket Codex parity (REQ-CSC-DOC-*). Six acceptance scenarios."
+  - phase: design
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-13"
+    registryWrite: non-deferred
+    note: "Recorded the per-adapter-constants decision with its evidence (OpenCode vs. Codex's genuinely different Context7 mechanisms), package layout for each of the seven phases, and Codebase Memory's design left explicitly unfinished pending its own first investigation sub-task -- not filled in with a guess."
+  - phase: tasks
+    agent: claude-code-session
+    model: claude-sonnet-5
+    timestamp: "2026-09-13"
+    registryWrite: non-deferred
+    note: "Created eight tasks (seven phases plus a final regression-gate/documentation task), each with concrete verification criteria including drift-detection tests (Claude's values compared directly against Codex's constants, not just asserted in isolation) for Context7 and Serena specifically, since REQ-CSC-ISO-001 requires them to stay in sync with Codex's matching definitions."
+next_action: "Awaiting user go-ahead to begin Task 1 implementation (RTK -- the smallest, most-isolated capability, chosen first specifically to prove the end-to-end pattern before the larger phases)."
