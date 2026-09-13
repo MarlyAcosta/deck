@@ -196,6 +196,10 @@ function parseCodexArgs(rest: string[]): ParsedArgs {
  * Parse `deck claude developer ...` — mirrors `parseCodexArgs`'s exec/resume handling (Claude
  * supports the same three launch modes) without Codex's TOML-safety-specific flags
  * (`--local-only`, `--memory=`), which this adapter does not implement.
+ *
+ * Install root is always `~/.claude/...` (`resolveClaudeInstallRoot` in `@deck/adapter-claude`),
+ * matching OpenCode's own configure-once-everywhere behavior exactly: no scope flag exists, by
+ * explicit user decision — none of the other runners expose one either.
  */
 function parseClaudeArgs(rest: string[]): ParsedArgs {
   if (rest[0] !== "developer") {

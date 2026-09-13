@@ -48,3 +48,14 @@ events:
     registry_write: non-deferred
     notes:
       - "Six tasks: root resolution + CLI default flip (Task 1), full transaction round trip plus the live precedence check (Task 2), documentation (Task 3), doctor/capability-inventory global visibility (Task 4, deferred), TUI scope-selection screen (Task 5, deferred), full regression gate (Task 6)."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-09-12"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Task 1 implemented with a --project opt-in flag first, then corrected mid-flight: the user caught, after implementation, that OpenCode's own CLI grammar has no scope flag at all -- confirmed directly in apps/cli/src/cli-args.ts. resolveClaudeInstallRoot() reworked to zero arguments (always homedir()); --project parsing and the installScope field removed entirely; proposal/spec/design/exploration/tasks revised in place."
+      - "Found and fixed via live verification: the mutation preview named no resolved root, making the global-vs-project destination unanswerable from CLI output. Fixed in the shared apps/cli/src/runner-launch-command.ts preview renderer -- a runner-neutral improvement (every runner's preview now names its Install root), not Claude-specific."
+      - "Verified: install-root.test.ts 2/2, cli-args.test.ts 60/60, tsc 0 errors, full suite 5001 pass/1 fail (same pre-existing failure) across 323 files. Live through the real binary from a scratch project already holding project-scoped content: default run resolved to the empty home directory; --project rejected as an unknown argument."

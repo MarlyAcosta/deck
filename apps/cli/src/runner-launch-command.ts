@@ -423,6 +423,7 @@ export async function runRunnerLaunch(input: RunRunnerLaunchInput): Promise<RunR
   });
   const preview = [
     `Mutation preview for ${input.adapter.displayName}:`,
+    `Install root: ${baseLaunch.projectRoot}`,
     ...(safeMutations.length === 0
       ? ["(no file mutations)"]
       : safeMutations.map((mutation) => `${mutation.action} ${mutation.path} pre=${mutation.preimage} post=${mutation.postimage} owner=${mutation.ownership}`)),

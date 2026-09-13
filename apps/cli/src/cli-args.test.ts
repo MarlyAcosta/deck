@@ -43,6 +43,11 @@ describe("parseArgs", () => {
     expect(parseArgs(["claude", "developer", "resume", "--last"])).toMatchObject({ command: "runner-launch", runnerId: "claude", launch: { mode: "resume-latest" } });
   });
 
+  test("Claude has no install-scope flag at all (add-claude-global-install-scope): --project is rejected like any unknown argument", () => {
+    expect(parseArgs(["claude", "developer", "--project"])).toMatchObject({ command: "error" });
+    expect(parseArgs(["claude", "developer", "--project", "--dry-run"])).toMatchObject({ command: "error" });
+  });
+
   test("rejects malformed Claude grammar instead of guessing", () => {
     expect(parseArgs(["claude", "developer", "exec", "fix it"]).command).toBe("error");
     expect(parseArgs(["claude", "developer", "resume"]).command).toBe("error");

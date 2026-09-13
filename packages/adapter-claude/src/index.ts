@@ -1,4 +1,5 @@
 export * from "./types";
+export * from "./install-root";
 export * from "./compatibility";
 export * from "./team-catalog";
 export * from "./preflight";

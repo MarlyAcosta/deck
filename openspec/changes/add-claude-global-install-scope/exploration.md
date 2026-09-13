@@ -59,9 +59,22 @@ convention is not treated as a substitute for a real observation, matching the s
 
 ## Scope decision trail
 
-The initial proposal draft kept project-scoped as the default and added `--global` as opt-in,
-to minimize behavioral delta from the existing (unreleased) adapter. The user explicitly
-requested the opposite — global by default, `--project` as the opt-in, matching OpenCode's actual
-default. Proposal, spec, and design were revised in place to reflect this before advancing to
-`tasks.md`; the reasoning for accepting the reversal is recorded in `design.md`'s "Decision:
-default flips to global" section.
+Three drafts, not one — each correction came from direct user feedback, not self-review:
+
+1. The initial proposal draft kept project-scoped as the default and added `--global` as opt-in,
+   to minimize behavioral delta from the existing (unreleased) adapter. Rejected: the user wanted
+   global by default, matching their actual OpenCode workflow.
+2. The second draft flipped the default to global and added `--project` as an opt-in escape
+   hatch. Rejected too: the user pointed out, after Task 1 was already implemented and verified
+   under this design, that OpenCode's own CLI grammar (`apps/cli/src/cli-args.ts`) has no
+   scope-related flag at all — `--project` invented a choice the reference implementation never
+   offers, rather than actually mirroring it.
+3. The third and shipped design has no flag, no parameter: `resolveClaudeInstallRoot()` always
+   returns `homedir()`, and an unrecognized `--project` token is rejected by the existing
+   unrecognized-argument path with no special-casing. Task 1's implementation (and its tests) were
+   revised in place to match, and re-verified live.
+
+Proposal, spec, design, and tasks were all revised in place after the second correction, before
+advancing further; the full reasoning for both corrections is recorded in `design.md`'s "Decision
+history: two rejected drafts, kept for honesty" section — kept there deliberately rather than
+scrubbed, since the corrections themselves are evidence the process caught real gaps.

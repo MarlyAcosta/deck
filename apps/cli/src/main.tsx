@@ -2,6 +2,7 @@ import React from "react";
 import { render, renderToString } from "ink";
 
 import { parseArgs } from "./cli-args";
+import { resolveClaudeInstallRoot } from "@deck/adapter-claude";
 import { getBuildInfo } from "./runtime/build-info";
 import { resolveProjectRoot } from "./project-root";
 import { createDefaultAdapterRegistry } from "./runner-adapters";
@@ -202,7 +203,9 @@ if (
 }
 
 if (parsed.command === "runner-launch") {
-  const projectRoot = resolveProjectRoot() ?? process.cwd();
+  const projectRoot = parsed.runnerId === "claude"
+    ? resolveClaudeInstallRoot()
+    : resolveProjectRoot() ?? process.cwd();
   const deckConfig = configStore.readRequired();
   const adapter = adapterRegistry.get(parsed.runnerId);
   const launch = { ...parsed.launch, projectRoot, teamId: parsed.teamId, deckConfig };

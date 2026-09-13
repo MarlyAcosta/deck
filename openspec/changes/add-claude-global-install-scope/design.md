@@ -1,111 +1,109 @@
 # Design: Global Install Scope for Claude Code
 
-## Decision: caller-supplied root, not a new code path
+## Decision: always global, no flag — matches OpenCode exactly
 
 `packages/adapter-claude/src/developer-team-install.ts` (`buildClaudeDeveloperTeamInstallPlan`)
 and `packages/adapter-claude/src/transaction.ts` (`backupClaudeFiles`, `applyClaudeFiles`,
 `rollbackClaudeFiles`, `verifyClaudeFiles`) already take a plain `projectRoot: string` and join
 every relative path (`.claude/agents/<id>.md`, `.claude/skills/<id>/SKILL.md`, `CLAUDE.md`)
-against it with `node:path`'s `join`. Confirmed by reading every call site in both files (not
-assumed): there is no logic anywhere in either module that inspects, validates, or special-cases
-the *meaning* of the root — it is treated as an opaque filesystem location throughout.
-
-This means global scope requires zero new code in either module. The only new logic is: what
-string does the CLI pass as that root. This is a materially smaller design than
-`add-claude-code-runner-support`'s own Phase 2 output-capture correction (which required a real
-shared-type change in `packages/core`) — here, the shared contract
-(`DeveloperTeamAdapterInstallInput.projectRoot: string`) already accepts any string; Deck's own
-CLI dispatch simply hasn't offered the user a way to make that string be `homedir()` for Claude.
+against it with `node:path`'s `join`. Confirmed by reading every call site in both files: there
+is no logic anywhere in either module that inspects, validates, or special-cases the *meaning* of
+the root — it is treated as an opaque filesystem location throughout. This means global-only
+resolution requires zero new code in either module; the only new logic is what string the CLI
+passes as that root, and now there is exactly one answer: `os.homedir()`, always.
 
 ```ts
-// packages/adapter-claude/src/install-root.ts (new, small, pure)
+// packages/adapter-claude/src/install-root.ts (new, ~5 lines, pure)
 import { homedir } from "node:os";
 
-export type ClaudeInstallScope = "global" | "project";
-
-export function resolveClaudeInstallRoot(cwdProjectRoot: string, scope: ClaudeInstallScope): string {
-  return scope === "global" ? homedir() : cwdProjectRoot;
+export function resolveClaudeInstallRoot(): string {
+  return homedir();
 }
 ```
 
-## Decision: default flips to global (user-directed, superseding the initial draft)
+## Decision history: two rejected drafts, kept for honesty
 
-The first draft of this design kept project-scoped as Claude's unconditional default and added
-`--global` as opt-in, reasoning that flipping the default would be a breaking change relative to
-`add-claude-code-runner-support`'s Phase 1-7 behavior. The user explicitly overrode that choice:
-Claude should behave like OpenCode — configure once, globally, available in every project — by
-default, with project-scoped installs as the explicit opt-in (`--project`) for the less common
-case.
+This design went through three iterations, each one corrected by direct user feedback rather than
+self-assessed as complete:
 
-This is accepted as the correct call, not merely followed: `add-claude-code-runner-support` has
-never shipped in a published Deck release (it lives only in the unreleased branch this change
-continues), so "breaking existing behavior" was a theoretical cost, not a real one — there is no
-external user whose workflow this default flip disrupts. Matching OpenCode's actual UX (the
-workflow the user already relies on daily) is the higher-value outcome. `resolveClaudeInstallRoot`
-takes an explicit `scope` argument rather than a boolean specifically so the default lives in one
-place (`parseClaudeArgs`'s flag parsing, `scope: "project" in deckFlagRegion ? "project" : "global"`)
-and is never silently re-derived elsewhere.
+1. Project-scoped default, `--global` opt-in. Rejected: didn't match the user's actual daily
+   workflow (OpenCode, configured once, always available).
+2. Global default, `--project` opt-in "for flexibility." Rejected: the user pointed out this
+   still didn't match OpenCode, because OpenCode's own CLI grammar has no scope flag at all —
+   adding `--project` invented a choice the reference implementation (OpenCode) never offers,
+   rather than mirroring it. Verified directly in `apps/cli/src/cli-args.ts`: OpenCode's grammar
+   is `opencode developer [--yes] [--dry-run] [--install-only] [--memory=...]` — nothing
+   scope-related exists there to mirror.
+3. **This design**: no flag, no parameter, always `homedir()`. `resolveClaudeInstallRoot` takes
+   zero arguments specifically because there is no longer a decision to parameterize — the
+   function's whole shape reflects the final, corrected understanding of what "match OpenCode"
+   actually means.
 
 ## Dispatch-site change
 
-`apps/cli/src/main.tsx:203-208` currently reads:
-
-```ts
-if (parsed.command === "runner-launch") {
-  const projectRoot = resolveProjectRoot() ?? process.cwd();
-  ...
-  const launch = { ...parsed.launch, projectRoot, teamId: parsed.teamId, deckConfig };
-```
-
-The change gates the root computation on `runnerId === "claude"`, leaving every other runner's
-resolution byte-for-byte identical:
+`apps/cli/src/main.tsx`'s `runner-launch` dispatch now reads:
 
 ```ts
 if (parsed.command === "runner-launch") {
   const projectRoot = parsed.runnerId === "claude"
-    ? resolveClaudeInstallRoot(resolveProjectRoot() ?? process.cwd(), parsed.scope)
+    ? resolveClaudeInstallRoot()
     : resolveProjectRoot() ?? process.cwd();
 ```
 
-`parsed.scope: "global" | "project"` is a new field added only to the Claude branch of the
-`ParsedArgs` `runner-launch` discriminated union in `apps/cli/src/cli-args.ts`, populated by
-`parseClaudeArgs`: `"project"` when `--project` appears in `deckFlagRegion`, `"global"` otherwise
-— mirroring exactly how `--dry-run`/`--install-only`/`--yes` are already parsed there, except this
-one carries a default value instead of being a plain boolean presence check.
+Every other `runnerId`'s resolution is byte-for-byte identical to `add-claude-code-runner-support`
+and to every other runner's own behavior; only Claude's branch changed.
 
-## Known, honestly unresolved risk: project-vs-global precedence
+## Shared, runner-neutral fix found during live verification: the preview didn't name its root
 
-Claude Code's actual behavior when a project-local `.claude/agents/deck-lead.md` and a
-user-level `~/.claude/agents/deck-lead.md` both exist — with different content — was **not**
-verified live in this exploration pass. Common CLI convention (and Claude Code's own published
-positioning of project config as more specific) suggests project-local wins, but "suggests" is
-not "confirmed," and REQ-CLD-COMPAT-003's own standard (never trust research over a live check)
-applies here too. This is recorded as an open risk in `proposal.md`, not silently assumed away;
-Task 2 in `tasks.md` includes a live test of this exact scenario before the change is considered
-verified, and the documentation update (Task 3) will state the confirmed result plainly rather
-than guessing.
+While live-verifying Task 1 (`deck claude developer --dry-run` from a project directory that
+already had project-scoped content installed from before this change), the mutation preview
+printed only relative paths (e.g. `create .claude/agents/deck-lead.md`) with no indication of
+*which* root those paths were relative to. This made the global-vs-project question genuinely
+unanswerable from the CLI output alone — exactly what REQ-CGS-CLI-003 requires to never happen.
+
+The fix lives in `apps/cli/src/runner-launch-command.ts` (shared by every runner, not
+Claude-specific): the preview header now includes an `Install root: <path>` line, sourced from
+`baseLaunch.projectRoot` (already in scope at that point). This is a strict, runner-neutral
+transparency improvement — Codex and OpenCode's own previews benefit too — and does not change
+any runner's actual resolved root, only what the existing preview names. Verified live:
+
+```
+$ deck claude developer --dry-run
+Install root: /home/marly
+create .claude/agents/deck-lead.md pre=absent ...
+```
+
+## Known, honestly unresolved risk: precedence with leftover project-scoped content
+
+Before this change, `add-claude-code-runner-support` materialized the Developer Team at the
+project root. After this change, the same command materializes at `homedir()` instead — leaving
+any previously-installed project-local `.claude/agents/*.md` in place, untouched, alongside the
+new global install. Claude Code's actual behavior when both a project-local and a user-level
+`.claude/agents/deck-lead.md` exist with different content was **not** verified live in this
+exploration pass. This is recorded as an open risk, not assumed away; Task 2 in `tasks.md`
+includes a live test of this exact scenario before the change is considered verified.
 
 ## Package layout
 
-- `packages/adapter-claude/src/install-root.ts` — new, ~10 lines, one pure function plus a test
-  file.
-- `apps/cli/src/cli-args.ts` — one new optional field on the Claude `ParsedArgs` variant, parsed
-  alongside the existing three boolean flags in `parseClaudeArgs`.
+- `packages/adapter-claude/src/install-root.ts` — new, ~5 lines, one pure zero-argument function
+  plus a 2-test file.
 - `apps/cli/src/main.tsx` — one conditional at the existing `projectRoot` computation site.
+- `apps/cli/src/runner-launch-command.ts` — one new line in the shared preview renderer (not
+  Claude-specific; benefits every runner).
 - No change to `packages/core`, `packages/adapter-pi`, `packages/adapter-opencode`,
-  `packages/adapter-codex`, or any file inside `packages/adapter-claude/src/` other than the new
-  `install-root.ts`.
+  `packages/adapter-codex`, `apps/cli/src/cli-args.ts` (no new flag to parse), or any file inside
+  `packages/adapter-claude/src/` other than the new `install-root.ts`.
 
 ## Deferred, tracked (not silently dropped)
 
 - **Doctor visibility** (Task 4): `diagnoseProject` and `getCapabilityInventory` today check
   `.claude/agents/` existence relative to the project root they're given; they are not wired to
-  also check the global root. A user running `deck doctor` in a project with only a global install
-  would see "not installed" for Developer Team materialization, which is misleading once this
-  change ships. Recorded as a real, user-visible gap, not an oversight to discover later.
-- **TUI scope-selection screen** (Task 5): `installTeamBundle` in `apps/cli/src/tui/app.tsx` calls
-  `buildDeveloperTeamInstallPlan`/`applyDeveloperTeamInstall` with the project root captured
-  earlier in the dashboard flow; there is currently no screen offering global as a choice. Adding
-  one is real Ink/React UI work, deliberately out of this change's first vertical (mirroring how
-  `add-claude-code-runner-support` itself shipped Phase 5's CLI surface before Phase 6's TUI
-  integration, as two separate, independently-verified steps).
+  check the global root instead. After this change ships, `deck doctor` run in any project would
+  report Developer Team materialization as missing even though a real global install exists — a
+  real, user-visible gap from day one, not a hypothetical one.
+- **TUI adoption** (Task 5): `installTeamBundle` in `apps/cli/src/tui/app.tsx` calls
+  `buildDeveloperTeamInstallPlan`/`applyDeveloperTeamInstall` with the project root the dashboard
+  session already captured; it does not yet call `resolveClaudeInstallRoot()` for Claude the way
+  the direct CLI command now does. This is a small, mechanical adoption once Tasks 1-3 are
+  verified, not new design work — sequenced after, mirroring how `add-claude-code-runner-support`
+  itself shipped Phase 5 (CLI) before Phase 6 (TUI) as two separate, independently-verified steps.
