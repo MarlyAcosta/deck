@@ -81,3 +81,25 @@ events:
       - "Task 3 complete: docs/runners.md, docs/runner-support.md, README.md updated to state the always-global default and the confirmed project-local-wins precedence. Corrected a flatly-false prior claim in docs/runner-support.md ('Deck writes project-local content only')."
       - "Widened beyond the three files tasks.md named after a grep sweep found docs/reference/support-matrix.md also implied project-scoped materialization. Added an honest Doctor-gap forward-reference in three places."
       - "Verified: documentation-governance.test.ts 16/16 pass first try; full bun test 5003 pass/1 fail across 323 files; tsc 0 errors."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-09-13"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Tasks 4 and 5 completed after the user asked why they'd been deferred; design-time estimates for both were wrong once actually investigated. Task 4: two existsSync checks in runner-adapter.ts. Task 5: one conditional in app.tsx's runDashboardInstall, the only relevant call site out of ~10 localResolvedProjectRoot mentions."
+      - "getCapabilityInventory's fix has real effect (TUI capability display). diagnoseProject's fix is correct but unreachable -- deck doctor has no Claude call site for it at all, a pre-existing gap from add-claude-code-runner-support."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-09-13"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Real bug found live during Task 4/5 verification: CLAUDE.md's path is root-shaped (<project>/CLAUDE.md vs <root>/.claude/CLAUDE.md for global), not root-agnostic. Caught only by a real install against real pre-existing ~/.claude/CLAUDE.md content -- created a stray unread ~/CLAUDE.md and left the real file untouched."
+      - "Fixed: isGlobalInstallRoot pure comparison in install-root.ts; developer-team-install.ts selects the path based on it; buildClaudeDeveloperTeamInstallPlan gained an optional test-only knownGlobalRoot parameter."
+      - "Process near-miss recorded honestly: a second real-install verification was left uncleaned for several turns, caught when full bun test showed 2 new failures in tests coupled to real ~/.claude/agents/ state. Cleaned up immediately; environment diff-confirmed restored exactly."
+      - "Verified: adapter-claude 130/130 pass (6 new tests); full bun test 5009 pass/1 fail (same pre-existing failure) across 323 files; tsc 0 errors; openspec validate 0 errors for this change."

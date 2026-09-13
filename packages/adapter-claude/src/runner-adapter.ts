@@ -58,6 +58,7 @@ import { buildClaudeDeveloperTeamInstallPlan } from "./developer-team-install";
 import { applyClaudeFiles, backupClaudeFiles, rollbackClaudeFiles, verifyClaudeFiles } from "./transaction";
 import { writeClaudeMcpConfig } from "./mcp-config";
 import { CLAUDE_CAPABILITY_CATALOG, type ClaudeCapabilityCatalogEntry } from "./capability-catalog";
+import { resolveClaudeInstallRoot } from "./install-root";
 
 export type ClaudeRunnerAdapterOptions = {
   preflight?: ClaudePreflightEffects;
@@ -149,16 +150,30 @@ export class ClaudeRunnerAdapter implements RunnerAdapter {
       ? { category: "launch-policy", status: "ok", message: "--permission-mode bypassPermissions is supported by this version." }
       : { category: "launch-policy", status: "warning", message: "--permission-mode bypassPermissions was not detected for this version; Deck-launched sessions may prompt for permissions.", suggestion: "Update Claude Code to a version confirmed to support it." });
 
-    const agentsInstalled = existsSync(join(projectRoot, ".claude", "agents"));
-    checks.push(agentsInstalled
-      ? { category: "developer-team", status: "ok", message: "Developer Team roles are materialized in .claude/agents/." }
-      : { category: "developer-team", status: "warning", message: "Developer Team roles are not materialized in this project yet.", suggestion: "Run the Claude Developer Team install." });
+    // deck claude developer always installs at the user level (add-claude-global-install-scope);
+    // Doctor checks both that global root and, honestly, any leftover project-local install too,
+    // rather than only the location the current default actually writes to.
+    const globalRoot = resolveClaudeInstallRoot();
+    const agentsInstalledGlobally = existsSync(join(globalRoot, ".claude", "agents"));
+    const agentsInstalledInProject = existsSync(join(projectRoot, ".claude", "agents"));
+    checks.push(agentsInstalledGlobally || agentsInstalledInProject
+      ? { category: "developer-team", status: "ok", message: agentsInstalledGlobally
+          ? "Developer Team roles are materialized in ~/.claude/agents/ (the always-global default)."
+          : "Developer Team roles are materialized in this project's .claude/agents/ (a leftover project-scoped install; project-local content takes precedence over the global one)." }
+      : { category: "developer-team", status: "warning", message: "Developer Team roles are not materialized yet.", suggestion: "Run `deck claude developer` to install (always at the user level)." });
 
-    const claudeMdPath = join(projectRoot, "CLAUDE.md");
-    const claudeMdOwned = existsSync(claudeMdPath) && readFileSync(claudeMdPath, "utf-8").includes("<!-- deck:developer-team:start -->");
-    checks.push(claudeMdOwned
-      ? { category: "claude-md", status: "ok", message: "CLAUDE.md carries Deck's Developer Team marker span." }
-      : { category: "claude-md", status: "warning", message: "CLAUDE.md has no Deck-owned marker span yet." });
+    // Claude Code's CLAUDE.md convention is root-shaped: the global (user-level) memory file is
+    // `~/.claude/CLAUDE.md`, not `~/CLAUDE.md` — see developer-team-install.ts's matching fix,
+    // found by the same live-verification bug this task's own real install surfaced.
+    const globalClaudeMdPath = join(globalRoot, ".claude", "CLAUDE.md");
+    const projectClaudeMdPath = join(projectRoot, "CLAUDE.md");
+    const claudeMdOwnedGlobally = existsSync(globalClaudeMdPath) && readFileSync(globalClaudeMdPath, "utf-8").includes("<!-- deck:developer-team:start -->");
+    const claudeMdOwnedInProject = existsSync(projectClaudeMdPath) && readFileSync(projectClaudeMdPath, "utf-8").includes("<!-- deck:developer-team:start -->");
+    checks.push(claudeMdOwnedGlobally || claudeMdOwnedInProject
+      ? { category: "claude-md", status: "ok", message: claudeMdOwnedGlobally
+          ? "~/.claude/CLAUDE.md carries Deck's Developer Team marker span."
+          : "This project's CLAUDE.md carries Deck's Developer Team marker span (a leftover project-scoped install)." }
+      : { category: "claude-md", status: "warning", message: "No CLAUDE.md carries a Deck-owned marker span yet." });
 
     return checks;
   }
@@ -331,7 +346,8 @@ export class ClaudeRunnerAdapter implements RunnerAdapter {
   }
 
   async getCapabilityInventory(input: CapabilityInventoryInput): Promise<CapabilityInventory> {
-    const agentsInstalled = existsSync(join(input.projectRoot, ".claude", "agents"));
+    const agentsInstalled = existsSync(join(resolveClaudeInstallRoot(), ".claude", "agents"))
+      || existsSync(join(input.projectRoot, ".claude", "agents"));
     return {
       runnerId: this.runnerId,
       environmentId: input.environmentId,

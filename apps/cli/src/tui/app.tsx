@@ -83,6 +83,7 @@ import {
   type PackageInstructionConfigurationMetadata,
 } from "@deck/core/config/deck-config";
 import { resolveCanonicalSupermemoryProjectScope } from "@deck/core/memory/canonical-supermemory-project";
+import { resolveClaudeInstallRoot } from "@deck/adapter-claude";
 import type { DeckConfigStore } from "../deck-config-store";
 import { buildCapabilityInstructionBundle, createOwnerOnlyFileSecretStore, getEnabledCapabilityInstructionIds, getEnabledPackageInstructionIds, prepareAndBuildDeveloperTeamInstallPlan } from "@deck/core";
 import type {
@@ -1252,8 +1253,10 @@ export function DeckApp(dependencies: DeckAppDependencies = {}) {
         dashboardState.adaptiveMemory.provider,
         memoryProvider,
       );
-      // Use stored project root, not the function
-      const projectRoot = localResolvedProjectRoot ?? process.cwd();
+      // Use stored project root, not the function. Claude always installs at the user level
+      // (add-claude-global-install-scope), matching deck claude developer's own CLI resolution
+      // in apps/cli/src/main.tsx — every other runner's resolution here is unchanged.
+      const projectRoot = adapter.runnerId === "claude" ? resolveClaudeInstallRoot() : (localResolvedProjectRoot ?? process.cwd());
       const environmentId = adapter.environmentIds[0];
       const currentOperation = dashboardState.currentOperation as SerenaOperationIdentity | undefined;
       const serenaAuthorization: SerenaBootstrapAuthorization | undefined = currentOperation?.explicitlySelected

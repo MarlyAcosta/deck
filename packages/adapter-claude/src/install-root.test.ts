@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
 
-import { resolveClaudeInstallRoot } from "./install-root";
+import { isGlobalInstallRoot, resolveClaudeInstallRoot } from "./install-root";
 
 describe("resolveClaudeInstallRoot", () => {
   test("always resolves to the real home directory, no scope choice", () => {
@@ -10,5 +10,20 @@ describe("resolveClaudeInstallRoot", () => {
 
   test("is pure: calling it repeatedly returns the same output, no side effects", () => {
     expect(resolveClaudeInstallRoot()).toBe(resolveClaudeInstallRoot());
+  });
+});
+
+describe("isGlobalInstallRoot", () => {
+  test("true when the candidate exactly matches the known global root", () => {
+    expect(isGlobalInstallRoot("/home/user", "/home/user")).toBe(true);
+  });
+
+  test("false for any different root, including a project path under the same home directory", () => {
+    expect(isGlobalInstallRoot("/home/user/my-project", "/home/user")).toBe(false);
+    expect(isGlobalInstallRoot("/some/other/place", "/home/user")).toBe(false);
+  });
+
+  test("is a plain string comparison: no trailing-slash or case normalization is applied", () => {
+    expect(isGlobalInstallRoot("/home/user/", "/home/user")).toBe(false);
   });
 });

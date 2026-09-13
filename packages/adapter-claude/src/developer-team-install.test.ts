@@ -132,6 +132,38 @@ describe("buildClaudeDeveloperTeamInstallPlan — collision safety", () => {
   });
 });
 
+describe("buildClaudeDeveloperTeamInstallPlan — CLAUDE.md path is root-shaped, not root-agnostic (real bug found live installing against the real ~/.claude/CLAUDE.md)", () => {
+  test("project root (default): CLAUDE.md materializes bare at the root, matching Claude Code's project-memory convention", async () => {
+    await withTempDir(async (dir) => {
+      const plan = buildClaudeDeveloperTeamInstallPlan(baseInput(dir));
+      expect(plan.files.some((f) => f.path === "CLAUDE.md")).toBe(true);
+      expect(plan.files.some((f) => f.path === ".claude/CLAUDE.md")).toBe(false);
+    });
+  });
+
+  test("global root (root === the known global root): CLAUDE.md materializes at .claude/CLAUDE.md, matching Claude Code's real user-memory convention — not the bare path a naive root-agnostic treatment would have used", async () => {
+    await withTempDir(async (dir) => {
+      // dir stands in for the known global root by being passed as both projectRoot and
+      // knownGlobalRoot — isGlobalInstallRoot's plain string comparison then treats it exactly
+      // as production treats a real resolveClaudeInstallRoot() === input.projectRoot match.
+      const plan = buildClaudeDeveloperTeamInstallPlan(baseInput(dir), dir);
+      expect(plan.files.some((f) => f.path === ".claude/CLAUDE.md")).toBe(true);
+      expect(plan.files.some((f) => f.path === "CLAUDE.md")).toBe(false);
+    });
+  });
+
+  test("global root: merges with pre-existing content at .claude/CLAUDE.md, not a stray bare CLAUDE.md (the exact real bug: a fresh install ignored real ~/.claude/CLAUDE.md content and created an unread ~/CLAUDE.md instead)", async () => {
+    await withTempDir(async (dir) => {
+      await mkdir(join(dir, ".claude"), { recursive: true });
+      await writeFile(join(dir, ".claude", "CLAUDE.md"), "# Real pre-existing global memory\n\nDo not lose this.\n", "utf-8");
+      const plan = buildClaudeDeveloperTeamInstallPlan(baseInput(dir), dir);
+      const claudeMd = plan.files.find((f) => f.path === ".claude/CLAUDE.md");
+      expect(claudeMd?.content).toContain("Do not lose this.");
+      expect(plan.files.some((f) => f.path === "CLAUDE.md")).toBe(false);
+    });
+  });
+});
+
 describe("buildClaudeDeveloperTeamInstallPlan — collision safety at global scope (REQ-CGS-RT-002: add-claude-global-install-scope)", () => {
   // Same collision guard, same code path, exercised against a root standing in for the real
   // homedir() resolveClaudeInstallRoot() now always returns — proves the ownership check that

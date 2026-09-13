@@ -3,8 +3,11 @@
 ## Execution rule
 
 Keep one implementation owner through Tasks 1-2 (the first launchable, fully-verified candidate).
-Tasks 4-5 are explicit, tracked deferrals — do not start them without a separate go-ahead, and do
-not let their absence block Tasks 1-3.
+Tasks 4-5 were initially scoped as deferred, do-not-start-without-a-go-ahead work — both were
+revisited and completed after the user asked why, and a proper investigation (not the original
+design-time estimate) showed each was small. See their entries below for the full account,
+including a real bug (`CLAUDE.md`'s path) found only once a real install was finally exercised
+end-to-end.
 
 ## Task 1: Root resolution and CLI dispatch — DONE
 
@@ -101,31 +104,93 @@ first try, including the forbidden-claim regexes that block overclaiming Claude 
 capability. Full `bun test`: 5003 pass / 1 fail (same pre-existing failure) across 323 files.
 `bunx tsc --noEmit`: 0 errors.
 
-## Task 4: Doctor/capability-inventory global visibility — deferred, not started
+## Task 4: Doctor/capability-inventory global visibility — DONE, with a discovered scope split
 
-- `diagnoseProject` and `getCapabilityInventory` currently check `.claude/agents/` existence
-  relative to whatever project root they're given; neither is wired to also check the global root.
-  After this change ships, a user with only a global install would see Developer Team
-  materialization reported as missing when running `deck doctor` in a project — a real,
-  user-visible gap from day one of this change, not a hypothetical one.
-- Not started in this pass. Tracked here so it is not silently forgotten, matching how
-  `add-claude-code-runner-support`'s own Task 3.6 recorded its deferred standalone-skill work.
+- Initially deferred on a design-time estimate ("touches shared doctor code") made without
+  reading the real implementation. Re-investigated on direct user question ("¿por qué no la 4 y
+  5?") and found genuinely small: `diagnoseProject` and `getCapabilityInventory` in
+  `packages/adapter-claude/src/runner-adapter.ts` both now check `resolveClaudeInstallRoot()` in
+  addition to the supplied project root — `.claude/agents/`/`CLAUDE.md` presence at *either*
+  location reports as installed, with the message distinguishing "the always-global default" from
+  "a leftover project-scoped install (project-local content takes precedence)."
+- **Real, honest limit found while verifying, not assumed fixed:** `getCapabilityInventory` is
+  called from `apps/cli/src/tui/app.tsx:1954` (the TUI's capability display) — the fix has real,
+  live effect there. `diagnoseProject` has exactly one call site in the entire CLI
+  (`doctor-diagnostics.ts`'s Codex-specific `inspectCodex`) — **no equivalent exists for Claude**,
+  a pre-existing gap from `add-claude-code-runner-support` itself, not introduced here. The
+  `diagnoseProject` fix is logically correct but currently unreachable from `deck doctor`; wiring
+  it in (mirroring `inspectCodex`) is separately-scoped work, not done in this pass without an
+  explicit go-ahead (asked; user redirected to Task 5 instead — see below).
 
-## Task 5: TUI adoption of the always-global root — deferred, not started
+**Verification — actually run:** `bun test packages/adapter-claude`: 130/130 pass before the real
+end-to-end check. Live, with explicit user permission (install → verify → cleanup, real writes to
+`~/.claude/`): the CLAUDE.md-path bug below was found during this exact verification.
 
-- `installTeamBundle` in `apps/cli/src/tui/app.tsx` calls
-  `buildDeveloperTeamInstallPlan`/`applyDeveloperTeamInstall` with whatever project root the
-  dashboard session already captured; it does not yet call `resolveClaudeInstallRoot()` for
-  Claude the way the direct CLI command now does. This is a small, mechanical adoption once Tasks
-  1-3 are verified — not new design work — deliberately sequenced after, mirroring how
-  `add-claude-code-runner-support` itself shipped Phase 5 (CLI) before Phase 6 (TUI) as two
-  separate, independently-verified steps rather than one combined one.
-- Not started in this pass.
+## Task 5: TUI adoption of the always-global root — DONE, scope corrected after re-investigation
+
+- Initially deferred on the same kind of design-time estimate as Task 4 ("real Ink/React UI
+  work... 10+ call sites"), made by pattern-matching on every `localResolvedProjectRoot` mention
+  in `app.tsx` without checking whether each one was actually relevant to Claude's install
+  location. Re-investigated properly on direct user request ("podemos revisar lo de la tarea 5...
+  hacer un plan de trabajo para hacerla bien"): traced every one of the ~10 call sites
+  individually. Only one — `runDashboardInstall` (the actual install trigger, ~line 1249) — is
+  relevant; the rest are Deck self-update, Web Search credential setup, generic model discovery,
+  and Supermemory project scope, none of which touch Claude's Developer Team materialization (and
+  Supermemory is a `"gap"` for Claude per the capability catalog, so it was never going to be
+  relevant).
+- Fix: one conditional in `runDashboardInstall`, mirroring `main.tsx`'s Task 1 pattern exactly —
+  `adapter.runnerId === "claude" ? resolveClaudeInstallRoot() : (localResolvedProjectRoot ??
+  process.cwd())`.
+
+**Verification — actually run:** `bunx tsc --noEmit`: 0 errors. `bun test apps/cli/src/tui`:
+367/367 pass (includes the synthetic-adapter Pi/OpenCode/Codex dashboard-install tests,
+confirming no cross-runner regression). Live TUI keypress-driving was not attempted (same
+honestly-recorded limit `add-claude-code-runner-support`'s own Phase 6 noted for Ink TUIs); the
+downstream materialization logic this now correctly routes to was already live-verified multiple
+times in Tasks 1, 2, and the CLAUDE.md-bug fix below.
+
+## Real bug found live during Task 4/5 verification: CLAUDE.md materializes at the wrong path for global scope — FIXED
+
+- **Found by finally doing a real install against the real, already-populated
+  `~/.claude/CLAUDE.md`** (which had genuine content: an `@RTK.md` inclusion) — every prior test
+  and live check used either empty temp directories or `--dry-run`, neither of which could reveal
+  this. The real apply created a stray, unread `~/CLAUDE.md` instead of merging with the real
+  `~/.claude/CLAUDE.md` Claude Code actually loads. Root cause: `developer-team-install.ts`
+  assumed `CLAUDE.md`'s relative path was root-agnostic like every other materialized path; it
+  is not — Claude Code's convention is `<project>/CLAUDE.md` for project scope but
+  `<root>/.claude/CLAUDE.md` for the user-level (global) scope.
+- Immediately cleaned up (with prior explicit user permission for the real-install verification
+  pattern) — the stray file removed, the real `~/.claude/CLAUDE.md` restored from a backup taken
+  before the first real install attempt.
+- Fix: `install-root.ts` gained `isGlobalInstallRoot(candidateRoot, knownGlobalRoot)`, a pure
+  comparison; `developer-team-install.ts` now selects `.claude/CLAUDE.md` vs `CLAUDE.md` based on
+  it. `buildClaudeDeveloperTeamInstallPlan` gained one optional, test-only `knownGlobalRoot`
+  parameter (default: the real `resolveClaudeInstallRoot()`) so the branch is unit-testable
+  without mocking `node:os` or writing into the real home directory during `bun test`.
+- **Process near-miss, recorded honestly:** a second real-install verification (proving the fix
+  itself) was left uncleaned for several turns while Task 4/5 discussion continued — violating the
+  explicit "install, verify, then delete it" agreement. Caught when the full `bun test` run showed
+  2 new failures (both `getCapabilityInventory`/`diagnoseProject` tests, which implicitly depend
+  on the real `~/.claude/agents/` being absent, per the "real, honest limit" recorded in
+  `design.md`). Cleaned up immediately upon discovery; the real `~/.claude/CLAUDE.md` restored
+  exactly (`diff` against the pre-test backup: identical). Recorded here as a concrete illustration
+  of why the full regression gate (Task 6) matters even when individual pieces already passed in
+  isolation — mirroring `add-claude-code-runner-support`'s own recorded near-miss with
+  `bun run --cwd apps/cli`.
+
+**Verification — actually run:** `bun test packages/adapter-claude`: 130/130 pass, including 6 new
+tests (`isGlobalInstallRoot`'s 3 comparison tests, plus 3 integration tests proving project scope
+stays bare `CLAUDE.md`, global scope uses `.claude/CLAUDE.md`, and global scope correctly merges
+with real pre-existing content rather than creating a stray file). Live, with explicit user
+permission, re-verified after the fix: a real `deck claude developer --install-only --yes`
+previews and applies `update .claude/CLAUDE.md` (not `create CLAUDE.md`), correctly merging with
+the pre-existing `@RTK.md` content. Full environment restored and confirmed byte-identical to its
+pre-test state via `diff`.
 
 ## Task 6: Full regression gate
 
 - Run `bun test` (full suite), `bunx tsc --noEmit`, and `deck openspec validate` against the final
-  state of Tasks 1-3.
+  state of Tasks 1-5 and the CLAUDE.md path fix.
 
 **Verification:** No regression in existing Pi/OpenCode/Codex/Claude test counts;
 `deck openspec validate` reports zero errors/warnings attributable to

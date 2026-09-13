@@ -23,10 +23,17 @@ REQ-CGS-ROOT-002: The root-resolution function MUST be pure (no filesystem acces
 parameters) and MUST NOT alter, wrap, or bypass `resolveProjectRoot()`'s own project-detection
 behavior, which remains used for every non-Claude runner unchanged.
 
-REQ-CGS-ROOT-003: `packages/adapter-claude/src/developer-team-install.ts` and
-`packages/adapter-claude/src/transaction.ts` MUST NOT be modified to add scope-awareness — the
-existing root parameter already accepts any root; the CLI dispatch layer is the only place the
-resolved value changes.
+REQ-CGS-ROOT-003: `packages/adapter-claude/src/transaction.ts` MUST NOT be modified to add
+scope-awareness — the existing root parameter already accepts any root; the CLI dispatch layer is
+the only place the resolved value changes.
+
+REQ-CGS-ROOT-004: Correction, found live rather than assumed correct: `CLAUDE.md`'s relative
+materialization path is NOT root-agnostic like every other path `developer-team-install.ts`
+produces — Claude Code's own convention places project memory at `<root>/CLAUDE.md` but
+user-level (global) memory at `<root>/.claude/CLAUDE.md`. `developer-team-install.ts` MUST select
+between these two relative paths based on a pure comparison (`isGlobalInstallRoot`) against the
+known global root, MUST NOT hardcode either path unconditionally, and MUST remain unit-testable
+without mocking `node:os` or writing to the real user home directory during `bun test`.
 
 ### Capability: CLI surface
 
@@ -77,10 +84,13 @@ pre-existing project-local content and the global install with the same agent ID
 content — that resolution is left entirely to Claude Code's own native precedence, which this
 change observes (per REQ-CGS-RT-003) but does not alter.
 
-REQ-CGS-DOC-002: Documentation updates MUST NOT claim `deck doctor` reports global-scope
-Developer Team state, that a TUI-specific scope selector exists (there is no scope to select),
-or that Codex/Pi have equivalent global-scope support — all are explicit, tracked gaps (Tasks 4
-and 5 in `tasks.md`, and Codex/Pi exclusion in `proposal.md`), not silently implied capabilities.
+REQ-CGS-DOC-002: Documentation updates MUST NOT claim the `deck doctor` **CLI command** reports
+global-scope Developer Team state for Claude — `diagnoseProject`'s own logic does (Task 4), but
+no call site wires it into `deck doctor` for Claude at all (a pre-existing gap from
+`add-claude-code-runner-support`, not this change's to close). Documentation MAY accurately state
+that the TUI's capability display (`getCapabilityInventory`) does reflect global-scope state,
+since that is real and live-verified. Documentation MUST NOT claim a TUI-specific scope selector
+exists (there is no scope to select) or that Codex/Pi have equivalent global-scope support.
 
 ## Acceptance scenarios
 

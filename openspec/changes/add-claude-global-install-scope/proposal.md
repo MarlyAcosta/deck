@@ -82,18 +82,23 @@ Two drafts preceded this one, both revised after direct user feedback rather tha
   install root (`Install root: <path>`) for every runner, not only Claude — a transparency gap
   found live while verifying this change (a preview that never named its own destination), fixed
   once in the shared preview-rendering code rather than duplicated per runner.
-- Doctor and capability-inventory visibility for the global install path (so `deck doctor` can
-  report on it) is deferred to a later task within this same change, not a separate proposal —
-  see Task 4 in `tasks.md`.
+- Doctor and capability-inventory global-root visibility (Task 4) and TUI adoption of the
+  always-global root (Task 5) — both initially deferred, then completed in this same change after
+  a proper investigation showed each was small (see `tasks.md` for the full account, including a
+  real `CLAUDE.md`-path bug found only once Task 4/5 verification finally exercised a real
+  install end-to-end).
+- `diagnoseProject`'s fix (part of Task 4) is real but currently unreachable: `deck doctor` has no
+  call site for it at all for Claude (a pre-existing gap from `add-claude-code-runner-support`,
+  confirmed by inspection, not introduced here) — wiring one in is separately-scoped, not done
+  here.
 
 ### Out of scope for the initial release
 
 - Any project-scoped install path for Claude, in any form (flag, config setting, or otherwise).
   Retired, not offered as an opt-in — see "Decision trail" above.
-- A TUI menu toggle. Moot now that there is no scope to toggle — the interactive dashboard's
-  install flow (`installTeamBundle` in `apps/cli/src/tui/app.tsx`) needs to route through
-  `resolveClaudeInstallRoot()` the same way the direct CLI command now does, tracked as Task 5
-  (adopting the new always-global root, not building a selector).
+- Wiring `deck doctor` to actually call `ClaudeRunnerAdapter.diagnoseProject` (mirroring Codex's
+  `inspectCodex`). The method's own logic is fixed and correct (Task 4); the CLI-level wiring gap
+  that makes it unreachable is a separate, pre-existing piece of work.
 - Any policy for reconciling a project-local and a global install that both exist (e.g. content
   left over from `add-claude-code-runner-support`'s prior project-scoped behavior, or content a
   user placed by hand). Claude Code's own precedence rule between project- and user-level
@@ -137,8 +142,13 @@ Two drafts preceded this one, both revised after direct user feedback rather tha
 3. **Task 3 — Documentation.** Update `docs/runners.md`'s Claude section and
    `docs/runner-support.md`'s Claude quick path to describe the always-global behavior, with the
    same honesty standard `add-claude-code-runner-support` set.
-4. **Task 4 — Doctor/capability-inventory visibility (deferred within this change).**
-5. **Task 5 — TUI adoption of the always-global root (deferred within this change).**
+4. **Task 4 — Doctor/capability-inventory visibility.** `getCapabilityInventory` (real effect,
+   used by the TUI) and `diagnoseProject` (correct but currently unreachable from `deck doctor` —
+   a pre-existing gap) both now check the global root.
+5. **Task 5 — TUI adoption of the always-global root.** One conditional in `runDashboardInstall`.
+6. **Bug fix found during Task 4/5 verification — `CLAUDE.md`'s path.** Not a planned task; found
+   by finally exercising a real install against real, pre-existing `~/.claude/CLAUDE.md` content.
+   See `tasks.md` and `design.md` for the full account.
 
 ## Risks and mitigations
 
