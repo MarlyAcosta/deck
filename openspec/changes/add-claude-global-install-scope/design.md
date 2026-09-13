@@ -73,15 +73,27 @@ Install root: /home/marly
 create .claude/agents/deck-lead.md pre=absent ...
 ```
 
-## Known, honestly unresolved risk: precedence with leftover project-scoped content
+## Resolved risk: precedence with leftover project-scoped content (Task 2, live-verified)
 
 Before this change, `add-claude-code-runner-support` materialized the Developer Team at the
 project root. After this change, the same command materializes at `homedir()` instead — leaving
 any previously-installed project-local `.claude/agents/*.md` in place, untouched, alongside the
-new global install. Claude Code's actual behavior when both a project-local and a user-level
-`.claude/agents/deck-lead.md` exist with different content was **not** verified live in this
-exploration pass. This is recorded as an open risk, not assumed away; Task 2 in `tasks.md`
-includes a live test of this exact scenario before the change is considered verified.
+new global install.
+
+**Live-verified, with explicit user permission (both files removed immediately after):** created
+a same-named agent (`deck-precedence-probe-temp`, trigger phrase "activate precedence probe") in
+both a scratch project's `.claude/agents/` (body: reply `PROJECT_WINS`) and the user's real
+`~/.claude/agents/` (body: reply `GLOBAL_WINS`), then invoked `claude -p` from that project
+directory. Result: `"result":"PROJECT_WINS"`, with `subagent_stats.spawned: 1` (exactly one
+agent ran, not both, not an error) — **Claude Code's own subagent resolution gives project-local
+content strict precedence over global (user-level) content with the same name.**
+
+This is a reassuring answer for the leftover-content scenario, not a neutral one: any
+project-local content installed before this change (by `add-claude-code-runner-support`'s prior
+project-scoped default) remains fully authoritative in that specific project — the new global
+install only fills in for projects that have no local override at all. Nothing silently changes
+behavior in a project that already had a local install; the global default only expands coverage
+to projects that previously had none.
 
 ## Package layout
 

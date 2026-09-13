@@ -132,6 +132,23 @@ describe("buildClaudeDeveloperTeamInstallPlan — collision safety", () => {
   });
 });
 
+describe("buildClaudeDeveloperTeamInstallPlan — collision safety at global scope (REQ-CGS-RT-002: add-claude-global-install-scope)", () => {
+  // Same collision guard, same code path, exercised against a root standing in for the real
+  // homedir() resolveClaudeInstallRoot() now always returns — proves the ownership check that
+  // already protects a project root protects the global root identically, not just by inference.
+  test("blocks instead of overwriting pre-existing unowned content at a root standing in for homedir()", async () => {
+    await withTempDir(async (globalRoot) => {
+      const leadPath = join(globalRoot, ".claude", "agents", "deck-lead.md");
+      await mkdir(join(globalRoot, ".claude", "agents"), { recursive: true });
+      await writeFile(leadPath, "---\nname: deck-lead\n---\n\nA human wrote this directly into their real ~/.claude/agents/, not Deck.\n", "utf-8");
+      const plan = buildClaudeDeveloperTeamInstallPlan(baseInput(globalRoot));
+      expect(plan.blocked).toBe(true);
+      expect(plan.diagnostics!.some((d) => d.includes("deck-lead.md") && d.includes("not Deck-owned"))).toBe(true);
+      expect(plan.files.some((f) => f.path === ".claude/agents/deck-lead.md")).toBe(false);
+    });
+  });
+});
+
 describe("buildClaudeDeveloperTeamInstallPlan — instruction translation is actually wired in", () => {
   test("blocks materialization if a capability instruction fragment leaks foreign-runner vocabulary", async () => {
     await withTempDir(async (dir) => {

@@ -85,6 +85,31 @@ describe("backupClaudeFiles / rollbackClaudeFiles", () => {
   });
 });
 
+describe("global scope round trip (REQ-CGS-RT-001: add-claude-global-install-scope)", () => {
+  // None of applyClaudeFiles/backupClaudeFiles/rollbackClaudeFiles/verifyClaudeFiles branch on
+  // whether the supplied root is actually $HOME (confirmed by reading every call site in this
+  // file — see design.md's "Decision" section) — a temp dir is therefore a faithful stand-in for
+  // resolveClaudeInstallRoot()'s real homedir() return value. This test proves the full
+  // backup -> apply -> verify -> rollback cycle end-to-end at that root, not just piecewise.
+  test("full backup -> apply -> verify -> rollback cycle succeeds at a root standing in for homedir()", async () => {
+    await withTempDir(async (globalRoot) => {
+      const backup = backupClaudeFiles(globalRoot, files);
+      expect(backup.entries.every((e) => e.existed === false)).toBe(true);
+
+      const applied = applyClaudeFiles(globalRoot, files);
+      expect(applied.changedCount).toBe(2);
+
+      const verified = verifyClaudeFiles(globalRoot, files);
+      expect(verified.valid).toBe(true);
+
+      const rolledBack = await rollbackClaudeFiles({ payload: backup, diagnostics: [] });
+      expect(rolledBack.status).toBe("rolled-back");
+      expect(existsSync(join(globalRoot, ".claude/agents/deck-lead.md"))).toBe(false);
+      expect(existsSync(join(globalRoot, ".claude/skills/deck-lead/SKILL.md"))).toBe(false);
+    });
+  });
+});
+
 describe("verifyClaudeFiles", () => {
   test("valid after a clean apply", async () => {
     await withTempDir(async (dir) => {

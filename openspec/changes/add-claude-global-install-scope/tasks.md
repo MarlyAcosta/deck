@@ -45,30 +45,35 @@ not let their absence block Tasks 1-3.
   pre-existing, environment-dependent `binary-smoke.test.tsx` case already present on
   `upstream/main` before any Claude work; zero regressions.
 
-## Task 2: Full round trip at global scope, plus the precedence check
+## Task 2: Full round trip at global scope, plus the precedence check — DONE
 
-- Prove `backupClaudeFiles`/`applyClaudeFiles`/`rollbackClaudeFiles`/`verifyClaudeFiles` work
-  correctly when handed a real (isolated, non-`$HOME`) directory standing in for `homedir()` —
-  reuse the exact same test patterns `transaction.test.ts` already has for project scope, applied
-  against a temp directory substituted as the resolved root (no production code branches on
-  "is this actually `$HOME`," so a temp dir is a faithful stand-in).
-- A dedicated test proves pre-existing, non-Deck-owned content at that root blocks the plan
-  (`isClaudeOwnedContent` false, `blocked: true`, diagnostic names the file) — the global-scope
-  analog of `add-claude-code-runner-support`'s existing project-scope collision test.
-- **Live-verify the precedence question `design.md` flagged as open**: what happens when a
-  project has *leftover* project-scoped content (materialized by `add-claude-code-runner-support`
-  before this change existed) alongside the new global install, with a same-named agent holding
-  different, distinguishable content (e.g. different trigger phrases) — using the user's real
-  `~/.claude/agents/` and a real scratch project's `.claude/agents/`, with explicit user
-  permission before writing anything to the real `~/.claude/agents/` (same permission pattern
-  already used and granted during this change's exploration phase) — cleaned up immediately
-  after, same as the exploration-phase probes.
+- Added `transaction.test.ts`'s "global scope round trip (REQ-CGS-RT-001)" describe block: a
+  single integrated test proves backup → apply → verify → rollback succeeds end-to-end against a
+  temp directory standing in for `homedir()` — not just piecewise reuse of the existing
+  project-scope tests (confirmed by reading every call site in `transaction.ts` that neither
+  `applyClaudeFiles` nor its siblings branch on whether the root is actually `$HOME`, so a temp
+  dir is a faithful stand-in, not an assumption).
+- Added `developer-team-install.test.ts`'s "collision safety at global scope (REQ-CGS-RT-002)"
+  describe block: pre-existing, non-Deck-owned content at a root standing in for `homedir()`
+  blocks the plan (`blocked: true`, diagnostic names the file) exactly as the existing
+  project-scope collision test proves for a project root — the global-scope analog, not a
+  duplicate assumption.
+- **Live-verified the precedence question `design.md` flagged as open**, with explicit user
+  permission (granted again, separately from the exploration-phase grant): created a same-named
+  agent (`deck-precedence-probe-temp`, trigger phrase "activate precedence probe") with
+  distinguishable bodies in both a scratch project's `.claude/agents/` (`PROJECT_WINS`) and the
+  user's real `~/.claude/agents/` (`GLOBAL_WINS`), then ran `claude -p` from that project
+  directory. Result: `"result":"PROJECT_WINS"`, `subagent_stats.spawned: 1` (exactly one agent
+  ran — no duplicate execution, no error). **Project-local content takes strict precedence over
+  global content with the same name.** Both probe files removed immediately after verification.
 
-**Verification:**
-- `bun test packages/adapter-claude/src/transaction.test.ts` (extended) passes.
-- The precedence question has a real, live-observed answer recorded in `design.md` (replacing the
-  "not verified" note) and reflected accurately in the Task 3 documentation update — whatever the
-  real answer turns out to be, not the assumed one.
+**Verification — actually run:**
+- `bun test packages/adapter-claude/src/transaction.test.ts`: 11/11 pass (up from 10).
+- `bun test packages/adapter-claude/src/developer-team-install.test.ts`: 10/10 pass (up from 9).
+- The precedence question has a real, live-observed answer (`PROJECT_WINS`, project-local strict
+  precedence) recorded in `design.md`'s "Resolved risk" section, replacing the prior "not
+  verified" note — ready for Task 3's documentation update to state this specific, confirmed
+  behavior rather than an assumption.
 
 ## Task 3: Documentation
 

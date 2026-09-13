@@ -59,3 +59,14 @@ events:
       - "Task 1 implemented with a --project opt-in flag first, then corrected mid-flight: the user caught, after implementation, that OpenCode's own CLI grammar has no scope flag at all -- confirmed directly in apps/cli/src/cli-args.ts. resolveClaudeInstallRoot() reworked to zero arguments (always homedir()); --project parsing and the installScope field removed entirely; proposal/spec/design/exploration/tasks revised in place."
       - "Found and fixed via live verification: the mutation preview named no resolved root, making the global-vs-project destination unanswerable from CLI output. Fixed in the shared apps/cli/src/runner-launch-command.ts preview renderer -- a runner-neutral improvement (every runner's preview now names its Install root), not Claude-specific."
       - "Verified: install-root.test.ts 2/2, cli-args.test.ts 60/60, tsc 0 errors, full suite 5001 pass/1 fail (same pre-existing failure) across 323 files. Live through the real binary from a scratch project already holding project-scoped content: default run resolved to the empty home directory; --project rejected as an unknown argument."
+  - phase: tasks
+    status: completed
+    event: tasks.completed
+    artifact: tasks.md
+    timestamp: "2026-09-12"
+    actor: claude-code-session
+    registry_write: non-deferred
+    notes:
+      - "Task 2 complete: integrated backup->apply->verify->rollback round-trip test and a collision-safety test, both explicitly framed as global-scope against a temp directory standing in for homedir()."
+      - "Live-verified the open precedence question with explicit user permission: a same-named agent with distinguishable bodies in a scratch project and the user's real ~/.claude/agents/ -- project-local content wins strictly (subagent_stats.spawned: 1, result: PROJECT_WINS). Both probe files removed immediately after."
+      - "Verified: transaction.test.ts 11/11 pass, developer-team-install.test.ts 10/10 pass."
